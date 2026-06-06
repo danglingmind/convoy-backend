@@ -49,6 +49,14 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       }[];
     };
 
+    // Validate required fields
+    if (!body.title || !body.destinationName ||
+        body.destinationLat == null || body.destinationLng == null ||
+        !body.routePolyline || body.distanceMeters == null ||
+        body.estimatedDurationSeconds == null) {
+      return reply.code(400).send({ error: 'MISSING_REQUIRED_FIELDS' });
+    }
+
     // Validate DESTINATION waypoint exists
     const hasDestination = body.waypoints?.some((w) => w.type === 'DESTINATION');
     if (!hasDestination) {
@@ -67,9 +75,10 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
 
     const plan = quota.plan;
 
-    // Cap maxAllowedParticipants to plan limit
+    // Cap maxAllowedParticipants to plan limit; fall back to plan limit if not provided
+    const requestedMax = Number(body.maxAllowedParticipants);
     const maxAllowed = Math.min(
-      body.maxAllowedParticipants,
+      Number.isFinite(requestedMax) ? requestedMax : plan.max_riders_per_ride,
       plan.max_riders_per_ride
     );
 
