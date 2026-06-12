@@ -1,5 +1,6 @@
 import Fastify, { FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
+import swagger from '@fastify/swagger';
 import { clerkAuth } from './middleware/auth';
 import { healthRoutes } from './routes/health';
 import { ridesRoutes } from './routes/rides';
@@ -12,6 +13,27 @@ export async function buildApp(): Promise<FastifyInstance> {
         process.env.NODE_ENV !== 'production'
           ? { target: 'pino-pretty', options: { colorize: true } }
           : undefined,
+    },
+  });
+
+  await fastify.register(swagger, {
+    openapi: {
+      openapi: '3.0.3',
+      info: {
+        title: 'Convoy API',
+        description: 'Motorcycle convoy ride coordination backend',
+        version: '1.0.0',
+      },
+      components: {
+        securitySchemes: {
+          bearerAuth: {
+            type: 'http',
+            scheme: 'bearer',
+            bearerFormat: 'JWT',
+            description: 'Clerk JWT token',
+          },
+        },
+      },
     },
   });
 

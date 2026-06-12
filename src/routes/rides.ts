@@ -8,6 +8,7 @@ import {
   getWaypoints,
   updateRideStatus,
 } from '../db/rideRepo';
+import { updateUserProfile } from '../db/userRepo';
 import {
   addParticipant,
   getParticipant,
@@ -26,9 +27,88 @@ import { getIO } from '../sockets/server';
 import { buildStatePayload } from '../sockets/broadcaster';
 import { ActiveRideState, WaypointType } from '../types';
 
+const security = [{ bearerAuth: [] }];
+
+const waypointSchema = {
+  type: 'object',
+  required: ['order', 'name', 'lat', 'lng', 'type'],
+  properties: {
+    order: { type: 'integer' },
+    name: { type: 'string' },
+    lat: { type: 'number' },
+    lng: { type: 'number' },
+    type: { type: 'string', enum: ['START', 'WAYPOINT', 'DESTINATION'] },
+  },
+} as const;
+
+const errorSchema = (description: string) => ({
+  type: 'object',
+  properties: { error: { type: 'string', description } },
+});
+
 export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
+  // PATCH /users/me — sync display name + avatar from client
+  fastify.patch('/users/me', {
+    schema: {
+      security,
+      summary: 'Update current user profile (name + avatar)',
+      tags: ['Users'],
+      body: {
+        type: 'object',
+        properties: {
+          name:      { type: 'string' },
+          avatarUrl: { type: 'string', nullable: true },
+        },
+      },
+      response: {
+        200: { type: 'object', properties: { ok: { type: 'boolean' } } },
+      },
+    },
+  }, async (request: FastifyRequest, reply) => {
+    const { userId } = request.user;
+    const body = request.body as { name?: string; avatarUrl?: string | null };
+    if (body.name?.trim()) {
+      await updateUserProfile(userId, body.name.trim(), body.avatarUrl ?? null);
+    }
+    return { ok: true };
+  });
+
   // POST /rides
-  fastify.post('/rides', async (request: FastifyRequest, reply) => {
+  fastify.post('/rides', {
+    schema: {
+      security,
+      summary: 'Create a new ride',
+      tags: ['Rides'],
+      body: {
+        type: 'object',
+        required: ['title', 'destinationName', 'destinationLat', 'destinationLng',
+                   'routePolyline', 'distanceMeters', 'estimatedDurationSeconds', 'waypoints'],
+        properties: {
+          title: { type: 'string' },
+          destinationName: { type: 'string' },
+          destinationLat: { type: 'number' },
+          destinationLng: { type: 'number' },
+          routePolyline: { type: 'string', description: 'Google encoded polyline' },
+          distanceMeters: { type: 'number' },
+          estimatedDurationSeconds: { type: 'number' },
+          maxAllowedParticipants: { type: 'integer' },
+          waypoints: { type: 'array', items: waypointSchema, minItems: 1 },
+        },
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            rideId: { type: 'string', format: 'uuid' },
+            inviteCode: { type: 'string' },
+          },
+        },
+        400: errorSchema('MISSING_REQUIRED_FIELDS | INVALID_WAYPOINTS'),
+        401: errorSchema('UNAUTHORIZED | INVALID_TOKEN'),
+        403: errorSchema('QUOTA_EXCEEDED'),
+      },
+    },
+  }, async (request: FastifyRequest, reply) => {
     const { userId, name, avatarUrl } = request.user;
 
     const body = request.body as {
@@ -146,8 +226,95 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
     return { rideId, inviteCode };
   });
 
+  // GET /rides/me — must be before /:rideId
+  fastify.get('/rides/me', {
+    schema: {
+      security,
+      summary: 'Get current user ride history (completed rides)',
+      tags: ['Rides'],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            rides: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  rideId:           { type: 'string' },
+                  title:            { type: 'string' },
+                  startedAt:        { type: 'string', nullable: true },
+                  endedAt:          { type: 'string', nullable: true },
+                  distanceMeters:   { type: 'number' },
+                  durationSeconds:  { type: 'integer', nullable: true },
+                  avgSpeedKmh:      { type: 'number', nullable: true },
+                  compactnessScore: { type: 'number', nullable: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  }, async (request: FastifyRequest, reply) => {
+    const { userId } = request.user;
+    const { rows } = await pool.query(
+      `SELECT r.id, r.title, r.started_at, r.ended_at, r.distance_meters,
+              rs.duration_seconds, rs.avg_speed_kmh, rs.compactness_score
+       FROM ride_participants rp
+       JOIN rides r ON r.id = rp.ride_id
+       LEFT JOIN ride_summaries rs ON rs.ride_id = r.id
+       WHERE rp.user_id = $1
+         AND r.status = 'COMPLETED'
+         AND rp.status != 'LEFT'
+       ORDER BY r.ended_at DESC
+       LIMIT 50`,
+      [userId]
+    );
+
+    return {
+      rides: rows.map((r) => ({
+        rideId:           r.id,
+        title:            r.title,
+        startedAt:        r.started_at?.toISOString() ?? null,
+        endedAt:          r.ended_at?.toISOString() ?? null,
+        distanceMeters:   r.distance_meters,
+        durationSeconds:  r.duration_seconds ?? null,
+        avgSpeedKmh:      r.avg_speed_kmh ?? null,
+        compactnessScore: r.compactness_score != null
+          ? Math.round(r.compactness_score * 100)
+          : null,
+      })),
+    };
+  });
+
   // GET /rides/join/:inviteCode — must be before /:rideId
-  fastify.get('/rides/join/:inviteCode', async (request: FastifyRequest, reply) => {
+  fastify.get('/rides/join/:inviteCode', {
+    schema: {
+      security,
+      summary: 'Look up a ride by invite code',
+      tags: ['Rides'],
+      params: {
+        type: 'object',
+        properties: { inviteCode: { type: 'string' } },
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            rideId: { type: 'string', format: 'uuid' },
+            title: { type: 'string' },
+            leaderName: { type: 'string' },
+            participantCount: { type: 'integer' },
+            maxParticipants: { type: 'integer' },
+            status: { type: 'string' },
+          },
+        },
+        404: errorSchema('INVITE_CODE_NOT_FOUND'),
+        409: errorSchema('RIDE_NOT_IN_LOBBY'),
+      },
+    },
+  }, async (request: FastifyRequest, reply) => {
     const { inviteCode } = request.params as { inviteCode: string };
     const ride = await getRideByInviteCode(inviteCode);
 
@@ -170,7 +337,54 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
   });
 
   // GET /rides/:rideId
-  fastify.get('/rides/:rideId', async (request: FastifyRequest, reply) => {
+  fastify.get('/rides/:rideId', {
+    schema: {
+      security,
+      summary: 'Get ride details',
+      tags: ['Rides'],
+      params: {
+        type: 'object',
+        properties: { rideId: { type: 'string', format: 'uuid' } },
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            title: { type: 'string' },
+            status: { type: 'string', enum: ['LOBBY', 'ACTIVE', 'PAUSED', 'COMPLETED'] },
+            leaderId: { type: 'string' },
+            inviteCode: { type: 'string' },
+            destinationName: { type: 'string' },
+            destinationLat: { type: 'number' },
+            destinationLng: { type: 'number' },
+            distanceMeters: { type: 'number' },
+            estimatedDurationSeconds: { type: 'number' },
+            maxAllowedParticipants: { type: 'integer' },
+            startedAt: { type: 'string', format: 'date-time', nullable: true },
+            endedAt: { type: 'string', format: 'date-time', nullable: true },
+            createdAt: { type: 'string', format: 'date-time' },
+            waypoints: { type: 'array', items: waypointSchema },
+            participants: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  userId: { type: 'string' },
+                  name: { type: 'string' },
+                  avatarUrl: { type: 'string', nullable: true },
+                  status: { type: 'string' },
+                  isLeader: { type: 'boolean' },
+                  joinedAt: { type: 'string', format: 'date-time' },
+                },
+              },
+            },
+          },
+        },
+        404: errorSchema('RIDE_NOT_FOUND'),
+      },
+    },
+  }, async (request: FastifyRequest, reply) => {
     const { rideId } = request.params as { rideId: string };
     const ride = await getRideById(rideId);
 
@@ -220,7 +434,23 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
   });
 
   // POST /rides/:rideId/join
-  fastify.post('/rides/:rideId/join', async (request: FastifyRequest, reply) => {
+  fastify.post('/rides/:rideId/join', {
+    schema: {
+      security,
+      summary: 'Join a ride',
+      tags: ['Rides'],
+      params: {
+        type: 'object',
+        properties: { rideId: { type: 'string', format: 'uuid' } },
+      },
+      response: {
+        200: { type: 'object', properties: { ok: { type: 'boolean' } } },
+        403: errorSchema('QUOTA_EXCEEDED'),
+        404: errorSchema('RIDE_NOT_FOUND'),
+        409: errorSchema('RIDE_NOT_IN_LOBBY | ALREADY_JOINED | RIDE_FULL'),
+      },
+    },
+  }, async (request: FastifyRequest, reply) => {
     const { userId } = request.user;
     const { rideId } = request.params as { rideId: string };
 
@@ -262,7 +492,23 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
   });
 
   // POST /rides/:rideId/start
-  fastify.post('/rides/:rideId/start', async (request: FastifyRequest, reply) => {
+  fastify.post('/rides/:rideId/start', {
+    schema: {
+      security,
+      summary: 'Start a ride (leader only)',
+      tags: ['Rides'],
+      params: {
+        type: 'object',
+        properties: { rideId: { type: 'string', format: 'uuid' } },
+      },
+      response: {
+        200: { type: 'object', properties: { ok: { type: 'boolean' } } },
+        403: errorSchema('NOT_LEADER'),
+        404: errorSchema('RIDE_NOT_FOUND'),
+        409: errorSchema('RIDE_NOT_IN_LOBBY'),
+      },
+    },
+  }, async (request: FastifyRequest, reply) => {
     const { userId } = request.user;
     const { rideId } = request.params as { rideId: string };
 
@@ -340,7 +586,23 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
   });
 
   // POST /rides/:rideId/pause
-  fastify.post('/rides/:rideId/pause', async (request: FastifyRequest, reply) => {
+  fastify.post('/rides/:rideId/pause', {
+    schema: {
+      security,
+      summary: 'Pause an active ride (leader only)',
+      tags: ['Rides'],
+      params: {
+        type: 'object',
+        properties: { rideId: { type: 'string', format: 'uuid' } },
+      },
+      response: {
+        200: { type: 'object', properties: { ok: { type: 'boolean' } } },
+        403: errorSchema('NOT_LEADER'),
+        404: errorSchema('RIDE_NOT_FOUND'),
+        409: errorSchema('RIDE_NOT_ACTIVE'),
+      },
+    },
+  }, async (request: FastifyRequest, reply) => {
     const { userId } = request.user;
     const { rideId } = request.params as { rideId: string };
 
@@ -364,7 +626,23 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
   });
 
   // POST /rides/:rideId/resume
-  fastify.post('/rides/:rideId/resume', async (request: FastifyRequest, reply) => {
+  fastify.post('/rides/:rideId/resume', {
+    schema: {
+      security,
+      summary: 'Resume a paused ride (leader only)',
+      tags: ['Rides'],
+      params: {
+        type: 'object',
+        properties: { rideId: { type: 'string', format: 'uuid' } },
+      },
+      response: {
+        200: { type: 'object', properties: { ok: { type: 'boolean' } } },
+        403: errorSchema('NOT_LEADER'),
+        404: errorSchema('RIDE_NOT_FOUND'),
+        409: errorSchema('RIDE_NOT_PAUSED'),
+      },
+    },
+  }, async (request: FastifyRequest, reply) => {
     const { userId } = request.user;
     const { rideId } = request.params as { rideId: string };
 
@@ -388,7 +666,26 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
   });
 
   // POST /rides/:rideId/end
-  fastify.post('/rides/:rideId/end', async (request: FastifyRequest, reply) => {
+  fastify.post('/rides/:rideId/end', {
+    schema: {
+      security,
+      summary: 'End a ride (leader only)',
+      tags: ['Rides'],
+      params: {
+        type: 'object',
+        properties: { rideId: { type: 'string', format: 'uuid' } },
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: { ok: { type: 'boolean' }, rideId: { type: 'string', format: 'uuid' } },
+        },
+        403: errorSchema('NOT_LEADER'),
+        404: errorSchema('RIDE_NOT_FOUND'),
+        409: errorSchema('RIDE_NOT_ACTIVE_OR_PAUSED'),
+      },
+    },
+  }, async (request: FastifyRequest, reply) => {
     const { userId } = request.user;
     const { rideId } = request.params as { rideId: string };
 
@@ -420,7 +717,36 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
   });
 
   // GET /rides/:rideId/summary
-  fastify.get('/rides/:rideId/summary', async (request: FastifyRequest, reply) => {
+  fastify.get('/rides/:rideId/summary', {
+    schema: {
+      security,
+      summary: 'Get post-ride summary',
+      tags: ['Rides'],
+      params: {
+        type: 'object',
+        properties: { rideId: { type: 'string', format: 'uuid' } },
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            rideId: { type: 'string', format: 'uuid' },
+            durationSeconds: { type: 'number' },
+            distanceMeters: { type: 'number' },
+            avgSpeedKmh: { type: 'number' },
+            maxGroupSplitMeters: { type: 'number' },
+            compactnessScore: { type: 'integer', description: '0-100' },
+            totalRegroups: { type: 'integer' },
+            totalEmergencies: { type: 'integer' },
+            createdAt: { type: 'string', format: 'date-time' },
+            participants: { type: 'array', items: { type: 'object' } },
+          },
+        },
+        404: errorSchema('RIDE_NOT_FOUND'),
+        409: errorSchema('RIDE_NOT_COMPLETED'),
+      },
+    },
+  }, async (request: FastifyRequest, reply) => {
     const { rideId } = request.params as { rideId: string };
 
     const ride = await getRideById(rideId);
