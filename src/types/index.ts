@@ -1,6 +1,6 @@
 export type RideStatus = 'LOBBY' | 'ACTIVE' | 'PAUSED' | 'COMPLETED';
 export type ParticipantStatus = 'JOINED' | 'READY' | 'ACTIVE' | 'DISCONNECTED' | 'LEFT';
-export type WaypointType = 'STOP' | 'FUEL' | 'FOOD' | 'SCENIC' | 'DESTINATION';
+export type WaypointType = 'START' | 'WAYPOINT' | 'DESTINATION';
 export type RegroupType = 'FUEL' | 'FOOD' | 'SCENIC' | 'STOP';
 export type RideTitle = 'RIDE_LEADER' | 'PACE_KEEPER' | 'TRAIL_GUARDIAN' | 'FORMATION_RIDER';
 export type SignalStrength = 'STRONG' | 'MODERATE' | 'WEAK';
