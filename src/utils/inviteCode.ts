@@ -6,7 +6,7 @@ export function generateInviteCode(): string {
   const bytes = randomBytes(4);
   let code = '';
   for (let i = 0; i < 6; i++) {
-    code += CHARSET[bytes[i % 4] % 32];
+    code += CHARSET[bytes[i % 4] % CHARSET.length];
   }
   return code;
 }
