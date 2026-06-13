@@ -312,7 +312,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
           },
         },
         404: errorSchema('INVITE_CODE_NOT_FOUND'),
-        409: errorSchema('RIDE_NOT_IN_LOBBY'),
+        409: errorSchema('RIDE_ENDED'),
       },
     },
   }, async (request: FastifyRequest, reply) => {
@@ -323,8 +323,8 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.code(404).send({ error: 'INVITE_CODE_NOT_FOUND' });
     }
 
-    if (ride.status !== 'LOBBY') {
-      return reply.code(409).send({ error: 'RIDE_NOT_IN_LOBBY', status: ride.status });
+    if (ride.status === 'COMPLETED') {
+      return reply.code(409).send({ error: 'RIDE_ENDED', status: ride.status });
     }
 
     return {
