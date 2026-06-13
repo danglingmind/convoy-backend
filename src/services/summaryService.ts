@@ -8,6 +8,41 @@ import {
 import { countRegroupEvents } from '../db/regroupRepo';
 import { countEmergencyEvents } from '../db/emergencyRepo';
 
+// Called when the ride's in-memory state was lost (e.g. server restart).
+// Produces a minimal summary from persisted DB data so the ride appears in history.
+export async function generateFallbackSummary(
+  rideId: string,
+  leaderId: string,
+  startedAt: Date,
+  endedAt: Date,
+  distanceMeters: number
+): Promise<void> {
+  const durationSeconds = Math.round(
+    (endedAt.getTime() - startedAt.getTime()) / 1000
+  );
+  const avgSpeedKmh =
+    durationSeconds > 0 ? (distanceMeters / durationSeconds) * 3.6 : null;
+
+  const [totalRegroups, totalEmergencies] = await Promise.all([
+    countRegroupEvents(rideId),
+    countEmergencyEvents(rideId),
+  ]);
+
+  await createSummary({
+    rideId,
+    durationSeconds,
+    distanceMeters,
+    avgSpeedKmh,
+    maxGroupSplitMeters: 0,
+    compactnessScore: 1.0,
+    totalRegroups,
+    totalEmergencies,
+  });
+
+  // Assign RIDE_LEADER title; others stay null (no GPS telemetry available)
+  await updateParticipantTitle(rideId, leaderId, 'RIDE_LEADER');
+}
+
 export async function generateRideSummary(
   rideId: string,
   startedAt: Date,

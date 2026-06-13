@@ -19,7 +19,7 @@ import {
 } from '../db/participantRepo';
 import { getSummaryWithParticipants } from '../db/summaryRepo';
 import { canUserParticipate, getUserPlanOrFree } from '../services/quotaService';
-import { generateRideSummary } from '../services/summaryService';
+import { generateRideSummary, generateFallbackSummary } from '../services/summaryService';
 import { generateInviteCode } from '../utils/inviteCode';
 import { decodePolyline, computeCumulativeDist } from '../engines/polylineDecoder';
 import { rideStore } from '../store/rideStore';
@@ -703,6 +703,11 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
 
     if (state && ride.started_at) {
       await generateRideSummary(rideId, ride.started_at, endedAt, state);
+    } else if (ride.started_at) {
+      // In-memory state lost (server restart). Create a fallback summary from DB data.
+      await generateFallbackSummary(
+        rideId, ride.leader_id, ride.started_at, endedAt, ride.distance_meters
+      );
     }
 
     rideStore.delete(rideId);
@@ -755,8 +760,18 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.code(409).send({ error: 'RIDE_NOT_COMPLETED' });
     }
 
-    const result = await getSummaryWithParticipants(rideId);
-    if (!result) return reply.code(404).send({ error: 'RIDE_NOT_FOUND' });
+    let result = await getSummaryWithParticipants(rideId);
+    if (!result) {
+      // No summary record — generate a fallback now so it exists for future calls too
+      const endedAt = ride.ended_at ?? new Date();
+      if (ride.started_at) {
+        await generateFallbackSummary(
+          rideId, ride.leader_id, ride.started_at, endedAt, ride.distance_meters
+        );
+        result = await getSummaryWithParticipants(rideId);
+      }
+      if (!result) return reply.code(404).send({ error: 'RIDE_NOT_FOUND' });
+    }
 
     const { summary, participants } = result;
 
