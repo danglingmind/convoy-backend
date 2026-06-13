@@ -7,10 +7,12 @@ import { enqueueBroadcast, buildStatePayload } from './broadcaster';
 import {
   updateParticipantStatus,
   getParticipant,
+  getParticipantsWithUsers,
 } from '../db/participantRepo';
+import { getRideById } from '../db/rideRepo';
 import { createRegroupEvent, resolveRegroupEvent } from '../db/regroupRepo';
 import { createEmergencyEvent } from '../db/emergencyRepo';
-import { RegroupType, ParticipantState } from '../types';
+import { RegroupType } from '../types';
 
 const disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -74,11 +76,36 @@ export function setupSocketHandlers(io: Server): void {
           avatarUrl: userAvatar,
         });
       } else {
-        // LOBBY or no in-memory state — just broadcast join
+        // LOBBY — fetch ride + current participants, then broadcast
+        const [ride, dbParticipants] = await Promise.all([
+          getRideById(rideId),
+          getParticipantsWithUsers(rideId),
+        ]);
+        const leaderId = ride?.leader_id ?? '';
+
+        // Broadcast complete participant record so iOS can decode it
         io.to(`ride:${rideId}`).emit('ride:participant_joined', {
           userId,
           name: userName,
           avatarUrl: userAvatar,
+          status: 'JOINED',
+          isLeader: userId === leaderId,
+          joinedAt: new Date().toISOString(),
+        });
+
+        // Send full roster snapshot to the joining client only — ensures the
+        // lobby roster is always populated even if the REST GET /rides/:id failed
+        const active = dbParticipants.filter((p) => p.status !== 'LEFT');
+        socket.emit('ride:lobby_roster', {
+          leaderId,
+          participants: active.map((p) => ({
+            userId: p.user_id,
+            name: p.name,
+            avatarUrl: p.avatar_url ?? null,
+            status: p.status,
+            isLeader: p.user_id === leaderId,
+            joinedAt: (p.joined_at as Date).toISOString(),
+          })),
         });
       }
     });
