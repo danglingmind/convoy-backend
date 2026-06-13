@@ -33,6 +33,7 @@ const waypointSchema = {
   type: 'object',
   required: ['order', 'name', 'lat', 'lng', 'type'],
   properties: {
+    id: { type: 'string', format: 'uuid' },
     order: { type: 'integer' },
     name: { type: 'string' },
     lat: { type: 'number' },
