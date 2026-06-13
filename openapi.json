@@ -133,6 +133,10 @@
                         "type"
                       ],
                       "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
                         "order": {
                           "type": "integer"
                         },
@@ -487,6 +491,10 @@
                           "type"
                         ],
                         "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
                           "order": {
                             "type": "integer"
                           },
