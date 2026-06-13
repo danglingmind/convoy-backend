@@ -448,7 +448,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
         200: { type: 'object', properties: { ok: { type: 'boolean' } } },
         403: errorSchema('QUOTA_EXCEEDED'),
         404: errorSchema('RIDE_NOT_FOUND'),
-        409: errorSchema('RIDE_NOT_IN_LOBBY | ALREADY_JOINED | RIDE_FULL'),
+        409: errorSchema('RIDE_ENDED | ALREADY_JOINED | RIDE_FULL'),
       },
     },
   }, async (request: FastifyRequest, reply) => {
@@ -457,7 +457,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
 
     const ride = await getRideById(rideId);
     if (!ride) return reply.code(404).send({ error: 'RIDE_NOT_FOUND' });
-    if (ride.status !== 'LOBBY') return reply.code(409).send({ error: 'RIDE_NOT_IN_LOBBY' });
+    if (ride.status === 'COMPLETED') return reply.code(409).send({ error: 'RIDE_ENDED' });
 
     const existing = await getParticipant(rideId, userId);
     if (existing && existing.status !== 'LEFT') {
