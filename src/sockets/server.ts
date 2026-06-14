@@ -17,8 +17,14 @@ export function initSocketServer(
   });
 
   io.use(async (socket, next) => {
-    const token = socket.handshake.auth?.token as string | undefined;
+    const auth = socket.handshake.auth;
+    const query = socket.handshake.query;
+    console.log('[socket:auth] handshake.auth =', JSON.stringify(auth));
+    console.log('[socket:auth] handshake.query keys =', Object.keys(query));
+
+    const token = auth?.token as string | undefined;
     if (!token) {
+      console.warn('[socket:auth] REJECTED — no token in handshake.auth');
       return next(new Error('UNAUTHORIZED'));
     }
     try {
@@ -38,9 +44,11 @@ export function initSocketServer(
       socket.data.name = name;
       socket.data.avatarUrl = avatarUrl;
 
+      console.log(`[socket:auth] OK — userId=${payload.sub} name="${name}"`);
       await upsertUser(payload.sub, name, avatarUrl);
       next();
-    } catch {
+    } catch (err) {
+      console.error('[socket:auth] REJECTED — token verification failed:', err);
       next(new Error('INVALID_TOKEN'));
     }
   });

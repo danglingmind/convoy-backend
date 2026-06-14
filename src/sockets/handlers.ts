@@ -23,14 +23,19 @@ export function setupSocketHandlers(io: Server): void {
     const userName = socket.data.name as string;
     const userAvatar = socket.data.avatarUrl as string | null;
 
+    console.log(`[socket:connect] userId=${userId} name="${userName}" socketId=${socket.id}`);
+
     // ride:join
     socket.on('ride:join', async ({ rideId }: { rideId: string }) => {
+      console.log(`[ride:join] userId=${userId} rideId=${rideId}`);
       // Validate DB participation
       const participant = await getParticipant(rideId, userId);
       if (!participant || participant.status === 'LEFT') {
+        console.warn(`[ride:join] REJECTED — userId=${userId} not a participant of rideId=${rideId}`);
         socket.emit('error', { error: 'NOT_A_PARTICIPANT' });
         return;
       }
+      console.log(`[ride:join] OK — userId=${userId} joined rideId=${rideId}`);
 
       // Cancel pending disconnect timer if reconnecting
       const timerKey = `${rideId}:${userId}`;
@@ -67,15 +72,14 @@ export function setupSocketHandlers(io: Server): void {
           pState.status = 'ACTIVE';
         }
 
-        // Send current state snapshot to this socket
-        socket.emit('ride:state_update', buildStatePayload(state));
-
-        // Broadcast join to room
+        // Broadcast join to room first, then push updated state to everyone
+        // so navigation views on existing clients pick up the new participant immediately.
         io.to(`ride:${rideId}`).emit('ride:participant_joined', {
           userId,
           name: userName,
           avatarUrl: userAvatar,
         });
+        io.to(`ride:${rideId}`).emit('ride:state_update', buildStatePayload(state));
       } else {
         // No in-memory state — fetch from DB to determine ride status
         const [ride, dbParticipants] = await Promise.all([
@@ -130,14 +134,12 @@ export function setupSocketHandlers(io: Server): void {
 
           rideStore.set(rideId, rebuiltState);
 
-          // Send current state snapshot to this socket
-          socket.emit('ride:state_update', buildStatePayload(rebuiltState));
-
           io.to(`ride:${rideId}`).emit('ride:participant_joined', {
             userId,
             name: userName,
             avatarUrl: userAvatar,
           });
+          io.to(`ride:${rideId}`).emit('ride:state_update', buildStatePayload(rebuiltState));
         } else {
           // LOBBY — broadcast join and send full roster to joining client
           io.to(`ride:${rideId}`).emit('ride:participant_joined', {
@@ -346,6 +348,8 @@ export function setupSocketHandlers(io: Server): void {
         },
         ack: (res: unknown) => void
       ) => {
+        console.log(`[ride:regroup] userId=${userId} rideId=${data.rideId} type=${data.type}`);
+
         // EMERGENCY is rejected — use ride:emergency
         if ((data.type as string) === 'EMERGENCY') {
           if (typeof ack === 'function')
@@ -355,9 +359,11 @@ export function setupSocketHandlers(io: Server): void {
 
         const state = rideStore.get(data.rideId);
         if (!state || state.status !== 'ACTIVE') {
+          console.warn(`[ride:regroup] BLOCKED — rideId=${data.rideId} state=${state?.status ?? 'NOT_IN_STORE'}`);
           if (typeof ack === 'function') ack({ ok: false, error: 'RIDE_NOT_ACTIVE' });
           return;
         }
+        console.log(`[ride:regroup] proceeding to DB write — rideId=${data.rideId}`);
 
         // Only one open regroup at a time — resolve previous if exists
         if (state.openRegroup) {
@@ -450,9 +456,12 @@ export function setupSocketHandlers(io: Server): void {
         },
         ack: (res: unknown) => void
       ) => {
+        console.log(`[ride:emergency] userId=${userId} rideId=${data.rideId}`);
+
         const state = rideStore.get(data.rideId);
         // Works during ACTIVE or PAUSED
         if (!state || (state.status !== 'ACTIVE' && state.status !== 'PAUSED')) {
+          console.warn(`[ride:emergency] BLOCKED — rideId=${data.rideId} state=${state?.status ?? 'NOT_IN_STORE'}`);
           if (typeof ack === 'function') ack({ ok: false, error: 'RIDE_NOT_ACTIVE' });
           return;
         }
