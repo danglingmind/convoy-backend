@@ -25,6 +25,16 @@ export function buildStatePayload(state: ActiveRideState) {
       signalStrength: p.signalStrength,
     })),
     leaderboard: state.leaderboard,
+    openRegroup: state.openRegroup
+      ? {
+          regroupId: state.openRegroup.regroupId,
+          type: state.openRegroup.type,
+          lat: state.openRegroup.lat,
+          lng: state.openRegroup.lng,
+          createdBy: state.openRegroup.createdBy,
+          createdAt: state.openRegroup.createdAt,
+        }
+      : null,
   };
 }
 

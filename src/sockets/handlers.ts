@@ -316,14 +316,17 @@ export function setupSocketHandlers(io: Server): void {
           data.lng
         );
 
+        const createdAt = new Date().toISOString();
+
         state.openRegroup = {
           regroupId,
+          type: data.type,
           lat: data.lat,
           lng: data.lng,
+          createdBy: userId,
+          createdAt,
           arrivedRiders: new Set(),
         };
-
-        const createdAt = new Date().toISOString();
 
         if (typeof ack === 'function') ack({ ok: true, regroupId });
 
@@ -335,6 +338,46 @@ export function setupSocketHandlers(io: Server): void {
           lng: data.lng,
           createdAt,
         });
+      }
+    );
+
+    // ride:regroup_arrived (ack) — manual "Mark as Arrived" from a rider
+    socket.on(
+      'ride:regroup_arrived',
+      async (
+        data: { rideId: string; regroupId: string },
+        ack: (res: unknown) => void
+      ) => {
+        const state = rideStore.get(data.rideId);
+        if (!state || state.status !== 'ACTIVE') {
+          if (typeof ack === 'function') ack({ ok: false, error: 'RIDE_NOT_ACTIVE' });
+          return;
+        }
+        if (!state.openRegroup || state.openRegroup.regroupId !== data.regroupId) {
+          if (typeof ack === 'function') ack({ ok: false, error: 'REGROUP_NOT_FOUND' });
+          return;
+        }
+
+        state.openRegroup.arrivedRiders.add(userId);
+
+        const activeParticipants = Array.from(state.participants.values()).filter(
+          (x) => x.status === 'ACTIVE'
+        );
+        const allArrived = activeParticipants.every((x) =>
+          state.openRegroup!.arrivedRiders.has(x.userId)
+        );
+
+        if (typeof ack === 'function') ack({ ok: true });
+
+        if (allArrived) {
+          const { regroupId } = state.openRegroup;
+          state.openRegroup = null;
+          await resolveRegroupEvent(regroupId).catch(() => {});
+          io.to(`ride:${data.rideId}`).emit('ride:regroup_resolved', {
+            regroupId,
+            resolvedAt: new Date().toISOString(),
+          });
+        }
       }
     );
 

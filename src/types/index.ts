@@ -46,8 +46,11 @@ export interface ActiveRideState {
   perRiderGapAccumulator: Map<string, { gapSum: number; gapCount: number }>;
   openRegroup: {
     regroupId: string;
+    type: RegroupType;
     lat: number;
     lng: number;
+    createdBy: string;
+    createdAt: string;
     arrivedRiders: Set<string>;
   } | null;
 }
