@@ -9,7 +9,8 @@ import {
   getParticipant,
   getParticipantsWithUsers,
 } from '../db/participantRepo';
-import { getRideById } from '../db/rideRepo';
+import { getRideById, getRideWithPolyline } from '../db/rideRepo';
+import { decodePolyline, computeCumulativeDist } from '../engines/polylineDecoder';
 import { createRegroupEvent, resolveRegroupEvent } from '../db/regroupRepo';
 import { createEmergencyEvent } from '../db/emergencyRepo';
 import { RegroupType } from '../types';
@@ -76,37 +77,93 @@ export function setupSocketHandlers(io: Server): void {
           avatarUrl: userAvatar,
         });
       } else {
-        // LOBBY — fetch ride + current participants, then broadcast
+        // No in-memory state — fetch from DB to determine ride status
         const [ride, dbParticipants] = await Promise.all([
-          getRideById(rideId),
+          getRideWithPolyline(rideId),
           getParticipantsWithUsers(rideId),
         ]);
         const leaderId = ride?.leader_id ?? '';
 
-        // Broadcast complete participant record so iOS can decode it
-        io.to(`ride:${rideId}`).emit('ride:participant_joined', {
-          userId,
-          name: userName,
-          avatarUrl: userAvatar,
-          status: 'JOINED',
-          isLeader: userId === leaderId,
-          joinedAt: new Date().toISOString(),
-        });
+        if (ride && (ride.status === 'ACTIVE' || ride.status === 'PAUSED')) {
+          // Server restarted while ride was running — rebuild in-memory state from DB
+          const routePoints = decodePolyline(ride.route_polyline);
+          const cumulativeDist = computeCumulativeDist(routePoints);
 
-        // Send full roster snapshot to the joining client only — ensures the
-        // lobby roster is always populated even if the REST GET /rides/:id failed
-        const active = dbParticipants.filter((p) => p.status !== 'LEFT');
-        socket.emit('ride:lobby_roster', {
-          leaderId,
-          participants: active.map((p) => ({
-            userId: p.user_id,
-            name: p.name,
-            avatarUrl: p.avatar_url ?? null,
-            status: p.status,
-            isLeader: p.user_id === leaderId,
-            joinedAt: (p.joined_at as Date).toISOString(),
-          })),
-        });
+          const participantMap = new Map(
+            dbParticipants
+              .filter((p) => p.status !== 'LEFT')
+              .map((p) => [
+                p.user_id,
+                {
+                  userId: p.user_id,
+                  name: p.name,
+                  avatarUrl: p.avatar_url ?? null,
+                  status: 'ACTIVE' as const,
+                  lat: null,
+                  lng: null,
+                  speed: null,
+                  heading: null,
+                  progress: 0,
+                  offRoute: false,
+                  battery: null,
+                  signalStrength: null,
+                  updatedAt: null,
+                },
+              ])
+          );
+
+          const rebuiltState = {
+            rideId,
+            status: ride.status,
+            leaderId,
+            distanceMeters: ride.distance_meters,
+            routePoints,
+            cumulativeDist,
+            participants: participantMap,
+            leaderboard: [],
+            splitActive: false,
+            spreadSampleSum: 0,
+            spreadSampleCount: 0,
+            perRiderGapAccumulator: new Map(),
+            openRegroup: null,
+          };
+
+          rideStore.set(rideId, rebuiltState);
+
+          // Send current state snapshot to this socket
+          socket.emit('ride:state_update', buildStatePayload(rebuiltState));
+
+          io.to(`ride:${rideId}`).emit('ride:participant_joined', {
+            userId,
+            name: userName,
+            avatarUrl: userAvatar,
+          });
+        } else {
+          // LOBBY — broadcast join and send full roster to joining client
+          io.to(`ride:${rideId}`).emit('ride:participant_joined', {
+            userId,
+            name: userName,
+            avatarUrl: userAvatar,
+            status: 'JOINED',
+            isLeader: userId === leaderId,
+            joinedAt: new Date().toISOString(),
+          });
+
+          // Send full roster snapshot to the joining client only — ensures the
+          // lobby roster is always populated even if the REST GET /rides/:id failed
+          const active = dbParticipants.filter((p) => p.status !== 'LEFT');
+          socket.emit('ride:lobby_roster', {
+            leaderId,
+            participants: active.map((p) => ({
+              userId: p.user_id,
+              name: p.name,
+              avatarUrl: p.avatar_url ?? null,
+              status: p.status,
+              isLeader: p.user_id === leaderId,
+              joinedAt: (p.joined_at as Date).toISOString(),
+            })),
+          });
+        }
       }
     });
 
