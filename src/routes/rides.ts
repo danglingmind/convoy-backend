@@ -231,7 +231,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get('/rides/me', {
     schema: {
       security,
-      summary: 'Get current user ride history (completed rides)',
+      summary: 'Get current user rides (all statuses)',
       tags: ['Rides'],
       response: {
         200: {
@@ -244,8 +244,12 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
                 properties: {
                   rideId:           { type: 'string' },
                   title:            { type: 'string' },
+                  status:           { type: 'string' },
+                  isLeader:         { type: 'boolean' },
+                  inviteCode:       { type: 'string', nullable: true },
                   startedAt:        { type: 'string', nullable: true },
                   endedAt:          { type: 'string', nullable: true },
+                  createdAt:        { type: 'string', nullable: true },
                   distanceMeters:   { type: 'number' },
                   durationSeconds:  { type: 'integer', nullable: true },
                   avgSpeedKmh:      { type: 'number', nullable: true },
@@ -260,15 +264,15 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
   }, async (request: FastifyRequest, reply) => {
     const { userId } = request.user;
     const { rows } = await pool.query(
-      `SELECT r.id, r.title, r.started_at, r.ended_at, r.distance_meters,
+      `SELECT r.id, r.title, r.status, r.leader_id, r.invite_code,
+              r.started_at, r.ended_at, r.created_at, r.distance_meters,
               rs.duration_seconds, rs.avg_speed_kmh, rs.compactness_score
        FROM ride_participants rp
        JOIN rides r ON r.id = rp.ride_id
        LEFT JOIN ride_summaries rs ON rs.ride_id = r.id
        WHERE rp.user_id = $1
-         AND r.status = 'COMPLETED'
          AND rp.status != 'LEFT'
-       ORDER BY r.ended_at DESC
+       ORDER BY r.created_at DESC
        LIMIT 50`,
       [userId]
     );
@@ -277,8 +281,12 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       rides: rows.map((r) => ({
         rideId:           r.id,
         title:            r.title,
+        status:           r.status,
+        isLeader:         r.leader_id === userId,
+        inviteCode:       r.status !== 'COMPLETED' ? r.invite_code : null,
         startedAt:        r.started_at?.toISOString() ?? null,
         endedAt:          r.ended_at?.toISOString() ?? null,
+        createdAt:        r.created_at?.toISOString() ?? null,
         distanceMeters:   r.distance_meters,
         durationSeconds:  r.duration_seconds ?? null,
         avgSpeedKmh:      r.avg_speed_kmh ?? null,
