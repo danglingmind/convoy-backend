@@ -505,6 +505,9 @@ export function setupSocketHandlers(io: Server): void {
           if (p) p.status = 'DISCONNECTED';
         }
 
+        // Notify all clients in the room so lobby presence dots update immediately
+        io.to(room).emit('ride:participant_offline', { userId });
+
         const timerKey = `${rideId}:${userId}`;
         const timer = setTimeout(async () => {
           disconnectTimers.delete(timerKey);
