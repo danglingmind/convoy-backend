@@ -306,13 +306,14 @@ export function setupSocketHandlers(io: Server): void {
         });
       }
 
-      // Regroup auto-resolution
+      // Regroup auto-resolution — 30 s grace period prevents instant self-resolve
       if (state.openRegroup && p.lat !== null && p.lng !== null) {
+        const regroupAgeMs = Date.now() - new Date(state.openRegroup.createdAt).getTime();
         const dist = haversine(
           { lat: p.lat, lng: p.lng },
           { lat: state.openRegroup.lat, lng: state.openRegroup.lng }
         );
-        if (dist <= 100) {
+        if (dist <= 100 && regroupAgeMs >= 30_000) {
           state.openRegroup.arrivedRiders.add(userId);
           const activeParticipants = Array.from(state.participants.values()).filter(
             (x) => x.status === 'ACTIVE'
