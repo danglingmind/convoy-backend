@@ -4,6 +4,7 @@ import swagger from '@fastify/swagger';
 import { clerkAuth } from './middleware/auth';
 import { healthRoutes } from './routes/health';
 import { ridesRoutes } from './routes/rides';
+import { membershipRoutes } from './routes/memberships';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const fastify = Fastify({
@@ -48,6 +49,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await fastify.register(async (protected_) => {
     protected_.addHook('preHandler', clerkAuth);
     await protected_.register(ridesRoutes);
+    await protected_.register(membershipRoutes);
   });
 
   // Global error handler

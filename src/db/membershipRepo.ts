@@ -27,6 +27,36 @@ export async function getUserPlan(userId: string): Promise<MembershipPlan | null
   return rows[0] ?? null;
 }
 
+export async function upsertMembership(params: {
+  userId: string;
+  planId: string;
+  startsAt: Date;
+  endsAt: Date;
+  appleOriginalTransactionId: string;
+  appleProductId: string;
+  appleEnvironment: string;
+}): Promise<void> {
+  await pool.query(
+    `INSERT INTO user_memberships
+       (user_id, plan_id, starts_at, ends_at,
+        apple_original_transaction_id, apple_product_id, apple_environment)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (apple_original_transaction_id)
+     DO UPDATE SET
+       ends_at            = EXCLUDED.ends_at,
+       apple_environment  = EXCLUDED.apple_environment`,
+    [
+      params.userId,
+      params.planId,
+      params.startsAt,
+      params.endsAt,
+      params.appleOriginalTransactionId,
+      params.appleProductId,
+      params.appleEnvironment,
+    ]
+  );
+}
+
 export async function getFreePlan(): Promise<MembershipPlan> {
   const { rows } = await pool.query<MembershipPlan>(
     `SELECT id, code, monthly_ride_participation_limit,
@@ -36,5 +66,17 @@ export async function getFreePlan(): Promise<MembershipPlan> {
      WHERE code = 'free'`
   );
   if (!rows[0]) throw new Error('Free plan not found — run migrations');
+  return rows[0];
+}
+
+export async function getPremiumPlan(): Promise<MembershipPlan> {
+  const { rows } = await pool.query<MembershipPlan>(
+    `SELECT id, code, monthly_ride_participation_limit,
+            max_riders_per_ride, ride_history_days,
+            replay_enabled, analytics_enabled
+     FROM membership_plans
+     WHERE code = 'premium'`
+  );
+  if (!rows[0]) throw new Error('Premium plan not found — run migrations');
   return rows[0];
 }
