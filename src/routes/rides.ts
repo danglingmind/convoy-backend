@@ -710,12 +710,13 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
 
     const state = rideStore.get(rideId);
 
+    const estDuration = ride.estimated_duration_seconds ?? undefined;
     if (state && ride.started_at) {
-      await generateRideSummary(rideId, ride.started_at, endedAt, state);
+      await generateRideSummary(rideId, ride.started_at, endedAt, state, estDuration);
     } else if (ride.started_at) {
       // In-memory state lost (server restart). Create a fallback summary from DB data.
       await generateFallbackSummary(
-        rideId, ride.leader_id, ride.started_at, endedAt, ride.distance_meters
+        rideId, ride.leader_id, ride.started_at, endedAt, ride.distance_meters, estDuration
       );
     }
 

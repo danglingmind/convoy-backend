@@ -15,9 +15,10 @@ export async function generateFallbackSummary(
   leaderId: string,
   startedAt: Date,
   endedAt: Date,
-  distanceMeters: number
+  distanceMeters: number,
+  estimatedDurationSeconds?: number
 ): Promise<void> {
-  const durationSeconds = Math.round(
+  const durationSeconds = estimatedDurationSeconds ?? Math.round(
     (endedAt.getTime() - startedAt.getTime()) / 1000
   );
   const avgSpeedKmh =
@@ -47,9 +48,10 @@ export async function generateRideSummary(
   rideId: string,
   startedAt: Date,
   endedAt: Date,
-  state: ActiveRideState
+  state: ActiveRideState,
+  estimatedDurationSeconds?: number
 ): Promise<void> {
-  const durationSeconds = Math.round(
+  const durationSeconds = estimatedDurationSeconds ?? Math.round(
     (endedAt.getTime() - startedAt.getTime()) / 1000
   );
   const distanceMeters = state.distanceMeters;
