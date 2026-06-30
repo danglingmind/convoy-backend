@@ -11,6 +11,12 @@ import {
 
 const security = [{ bearerAuth: [] }];
 
+// Valid Convoy IAP product IDs — reject any signed transaction for a different app's product.
+const VALID_PRODUCT_IDS = new Set([
+  'danglingmind.convoy.membership.monthly',
+  'danglingmind.convoy.membership.yearly',
+]);
+
 // Apple's public JWKS endpoint — keys are cached internally by jose with TTL.
 const appleJWKS = createRemoteJWKSet(
   new URL('https://appleid.apple.com/auth/keys')
@@ -135,6 +141,14 @@ export async function membershipRoutes(fastify: FastifyInstance): Promise<void> 
 
     if (!payload.originalTransactionId || !payload.expiresDate) {
       return reply.code(400).send({ error: 'INVALID_TRANSACTION_PAYLOAD' });
+    }
+
+    if (!VALID_PRODUCT_IDS.has(payload.productId)) {
+      return reply.code(400).send({ error: 'INVALID_PRODUCT_ID' });
+    }
+
+    if (process.env.NODE_ENV === 'production' && payload.environment === 'Sandbox') {
+      return reply.code(400).send({ error: 'SANDBOX_TRANSACTION_IN_PRODUCTION' });
     }
 
     const endsAt = new Date(payload.expiresDate);
