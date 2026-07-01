@@ -177,6 +177,50 @@ export async function getWaypoints(rideId: string): Promise<WaypointRow[]> {
   return rows;
 }
 
+export interface UpdateRideInput {
+  title: string;
+  destinationName: string;
+  destinationLat: number;
+  destinationLng: number;
+  routePolyline: string;
+  distanceMeters: number;
+  estimatedDurationSeconds: number;
+  maxAllowedParticipants: number;
+  waypoints: WaypointInput[];
+}
+
+export async function updateRide(rideId: string, input: UpdateRideInput): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `UPDATE rides
+         SET title = $1, destination_name = $2, destination_lat = $3, destination_lng = $4,
+             route_polyline = $5, distance_meters = $6, estimated_duration_seconds = $7,
+             max_allowed_participants = $8
+       WHERE id = $9`,
+      [
+        input.title, input.destinationName, input.destinationLat, input.destinationLng,
+        input.routePolyline, input.distanceMeters, input.estimatedDurationSeconds,
+        input.maxAllowedParticipants, rideId,
+      ]
+    );
+    await client.query('DELETE FROM ride_waypoints WHERE ride_id = $1', [rideId]);
+    for (const wp of input.waypoints) {
+      await client.query(
+        `INSERT INTO ride_waypoints (ride_id, "order", name, lat, lng, type) VALUES ($1,$2,$3,$4,$5,$6)`,
+        [rideId, wp.order, wp.name, wp.lat, wp.lng, wp.type]
+      );
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function updateRideStatus(
   id: string,
   status: RideStatus,

@@ -656,6 +656,195 @@
             }
           }
         }
+      },
+      "patch": {
+        "summary": "Update ride details (leader, LOBBY only)",
+        "tags": [
+          "Rides"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "title",
+                  "destinationName",
+                  "destinationLat",
+                  "destinationLng",
+                  "routePolyline",
+                  "distanceMeters",
+                  "estimatedDurationSeconds",
+                  "waypoints"
+                ],
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "destinationName": {
+                    "type": "string"
+                  },
+                  "destinationLat": {
+                    "type": "number"
+                  },
+                  "destinationLng": {
+                    "type": "number"
+                  },
+                  "routePolyline": {
+                    "type": "string"
+                  },
+                  "distanceMeters": {
+                    "type": "number"
+                  },
+                  "estimatedDurationSeconds": {
+                    "type": "number"
+                  },
+                  "maxAllowedParticipants": {
+                    "type": "integer"
+                  },
+                  "waypoints": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "order",
+                        "name",
+                        "lat",
+                        "lng",
+                        "type"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "order": {
+                          "type": "integer"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "lat": {
+                          "type": "number"
+                        },
+                        "lng": {
+                          "type": "number"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "START",
+                            "WAYPOINT",
+                            "DESTINATION"
+                          ]
+                        }
+                      }
+                    },
+                    "minItems": 1
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "rideId",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "INVALID_WAYPOINTS"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "NOT_LEADER"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "RIDE_NOT_FOUND"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "RIDE_NOT_IN_LOBBY"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/rides/{rideId}/join": {

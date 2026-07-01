@@ -6,7 +6,9 @@ import {
   getRideWithPolyline,
   getRideByInviteCode,
   getWaypoints,
+  updateRide,
   updateRideStatus,
+  WaypointInput,
 } from '../db/rideRepo';
 import { updateUserProfile } from '../db/userRepo';
 import {
@@ -440,6 +442,101 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
           joinedAt: p.joined_at,
         })),
     };
+  });
+
+  // PATCH /rides/:rideId — update ride details (leader only, LOBBY only)
+  fastify.patch('/rides/:rideId', {
+    schema: {
+      security,
+      summary: 'Update ride details (leader, LOBBY only)',
+      tags: ['Rides'],
+      params: {
+        type: 'object',
+        properties: { rideId: { type: 'string', format: 'uuid' } },
+      },
+      body: {
+        type: 'object',
+        required: ['title', 'destinationName', 'destinationLat', 'destinationLng',
+                   'routePolyline', 'distanceMeters', 'estimatedDurationSeconds', 'waypoints'],
+        properties: {
+          title:                    { type: 'string' },
+          destinationName:          { type: 'string' },
+          destinationLat:           { type: 'number' },
+          destinationLng:           { type: 'number' },
+          routePolyline:            { type: 'string' },
+          distanceMeters:           { type: 'number' },
+          estimatedDurationSeconds: { type: 'number' },
+          maxAllowedParticipants:   { type: 'integer' },
+          waypoints: { type: 'array', items: waypointSchema, minItems: 1 },
+        },
+      },
+      response: {
+        200: { type: 'object', properties: { ok: { type: 'boolean' } } },
+        400: errorSchema('INVALID_WAYPOINTS'),
+        403: errorSchema('NOT_LEADER'),
+        404: errorSchema('RIDE_NOT_FOUND'),
+        409: errorSchema('RIDE_NOT_IN_LOBBY'),
+      },
+    },
+  }, async (request: FastifyRequest, reply) => {
+    const { userId } = request.user;
+    const { rideId } = request.params as { rideId: string };
+    const body = request.body as {
+      title: string;
+      destinationName: string;
+      destinationLat: number;
+      destinationLng: number;
+      routePolyline: string;
+      distanceMeters: number;
+      estimatedDurationSeconds: number;
+      maxAllowedParticipants?: number;
+      waypoints: { order: number; name: string; lat: number; lng: number; type: string }[];
+    };
+
+    const hasDestination = body.waypoints?.some((w) => w.type === 'DESTINATION');
+    if (!hasDestination) return reply.code(400).send({ error: 'INVALID_WAYPOINTS' });
+
+    const ride = await getRideById(rideId);
+    if (!ride) return reply.code(404).send({ error: 'RIDE_NOT_FOUND' });
+    if (ride.leader_id !== userId) return reply.code(403).send({ error: 'NOT_LEADER' });
+    if (ride.status !== 'LOBBY') return reply.code(409).send({ error: 'RIDE_NOT_IN_LOBBY' });
+
+    // Cap maxAllowedParticipants to the plan limit recorded at ride creation time
+    const planMax = (ride.membership_snapshot as { maxRidersPerRide: number }).maxRidersPerRide;
+    const requestedMax = body.maxAllowedParticipants ?? ride.max_allowed_participants;
+    const maxAllowed = Math.min(requestedMax, planMax);
+
+    await updateRide(rideId, {
+      title:                    body.title,
+      destinationName:          body.destinationName,
+      destinationLat:           body.destinationLat,
+      destinationLng:           body.destinationLng,
+      routePolyline:            body.routePolyline,
+      distanceMeters:           body.distanceMeters,
+      estimatedDurationSeconds: body.estimatedDurationSeconds,
+      maxAllowedParticipants:   maxAllowed,
+      waypoints: body.waypoints as WaypointInput[],
+    });
+
+    getIO().to(`ride:${rideId}`).emit('ride:updated', {
+      rideId,
+      title:                    body.title,
+      destinationName:          body.destinationName,
+      destinationLat:           body.destinationLat,
+      destinationLng:           body.destinationLng,
+      distanceMeters:           body.distanceMeters,
+      estimatedDurationSeconds: body.estimatedDurationSeconds,
+      maxAllowedParticipants:   maxAllowed,
+      waypoints: body.waypoints.map((w) => ({
+        order: w.order,
+        name:  w.name,
+        lat:   w.lat,
+        lng:   w.lng,
+        type:  w.type,
+      })),
+    });
+
+    return { ok: true };
   });
 
   // POST /rides/:rideId/join
