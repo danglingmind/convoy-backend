@@ -63,9 +63,15 @@ export async function membershipRoutes(fastify: FastifyInstance): Promise<void> 
         200: {
           type: 'object',
           properties: {
-            userId:    { type: 'string' },
-            name:      { type: 'string' },
-            avatarUrl: { type: 'string', nullable: true },
+            userId:               { type: 'string' },
+            name:                 { type: 'string' },
+            avatarUrl:            { type: 'string', nullable: true },
+            username:             { type: 'string', nullable: true },
+            phone:                { type: 'string', nullable: true },
+            phoneVisible:         { type: 'boolean' },
+            emailContact:         { type: 'string', nullable: true },
+            emailContactVisible:  { type: 'boolean' },
+            notifyNearbyRides:    { type: 'boolean' },
             plan: {
               type: 'object',
               properties: {
@@ -90,7 +96,18 @@ export async function membershipRoutes(fastify: FastifyInstance): Promise<void> 
     ]);
     if (!user) return reply.code(404).send({ error: 'USER_NOT_FOUND' });
     const plan = activePlan ?? await getFreePlan();
-    return { userId: user.id, name: user.name, avatarUrl: user.avatar_url, plan: planResponse(plan) };
+    return {
+      userId:              user.id,
+      name:                user.name,
+      avatarUrl:           user.avatar_url,
+      username:            user.username,
+      phone:               user.phone,
+      phoneVisible:        user.phone_visible,
+      emailContact:        user.email_contact,
+      emailContactVisible: user.email_contact_visible,
+      notifyNearbyRides:   user.notify_nearby_rides,
+      plan:                planResponse(plan),
+    };
   });
 
   // POST /memberships/activate — verify Apple IAP signed transaction and upgrade user

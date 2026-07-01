@@ -28,7 +28,7 @@
     },
     "/users/me": {
       "patch": {
-        "summary": "Update current user profile (name + avatar)",
+        "summary": "Update current user profile",
         "tags": [
           "Users"
         ],
@@ -44,6 +44,27 @@
                   "avatarUrl": {
                     "type": "string",
                     "nullable": true
+                  },
+                  "username": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "phone": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "phoneVisible": {
+                    "type": "boolean"
+                  },
+                  "emailContact": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "emailContactVisible": {
+                    "type": "boolean"
+                  },
+                  "notifyNearbyRides": {
+                    "type": "boolean"
                   }
                 }
               }
@@ -65,6 +86,21 @@
                   "properties": {
                     "ok": {
                       "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
                     }
                   }
                 }
@@ -100,6 +136,27 @@
                     "avatarUrl": {
                       "type": "string",
                       "nullable": true
+                    },
+                    "username": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "phone": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "phoneVisible": {
+                      "type": "boolean"
+                    },
+                    "emailContact": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "emailContactVisible": {
+                      "type": "boolean"
+                    },
+                    "notifyNearbyRides": {
+                      "type": "boolean"
                     },
                     "plan": {
                       "type": "object",

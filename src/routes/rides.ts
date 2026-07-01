@@ -10,7 +10,7 @@ import {
   updateRideStatus,
   WaypointInput,
 } from '../db/rideRepo';
-import { updateUserProfile } from '../db/userRepo';
+import { updateUserProfile, updateExtendedProfile } from '../db/userRepo';
 import {
   addParticipant,
   getParticipant,
@@ -50,29 +50,60 @@ const errorSchema = (description: string) => ({
 });
 
 export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
-  // PATCH /users/me — sync display name + avatar from client
+  // PATCH /users/me — sync display name + avatar + extended profile fields
   fastify.patch('/users/me', {
     schema: {
       security,
-      summary: 'Update current user profile (name + avatar)',
+      summary: 'Update current user profile',
       tags: ['Users'],
       body: {
         type: 'object',
         properties: {
-          name:      { type: 'string' },
-          avatarUrl: { type: 'string', nullable: true },
+          name:                 { type: 'string' },
+          avatarUrl:            { type: 'string', nullable: true },
+          username:             { type: 'string', nullable: true },
+          phone:                { type: 'string', nullable: true },
+          phoneVisible:         { type: 'boolean' },
+          emailContact:         { type: 'string', nullable: true },
+          emailContactVisible:  { type: 'boolean' },
+          notifyNearbyRides:    { type: 'boolean' },
         },
       },
       response: {
         200: { type: 'object', properties: { ok: { type: 'boolean' } } },
+        409: { type: 'object', properties: { error: { type: 'string' } } },
       },
     },
   }, async (request: FastifyRequest, reply) => {
     const { userId } = request.user;
-    const body = request.body as { name?: string; avatarUrl?: string | null };
+    const body = request.body as {
+      name?: string;
+      avatarUrl?: string | null;
+      username?: string | null;
+      phone?: string | null;
+      phoneVisible?: boolean;
+      emailContact?: string | null;
+      emailContactVisible?: boolean;
+      notifyNearbyRides?: boolean;
+    };
+
     if (body.name?.trim()) {
       await updateUserProfile(userId, body.name.trim(), body.avatarUrl ?? null);
     }
+
+    const { usernameConflict } = await updateExtendedProfile(userId, {
+      username:            body.username,
+      phone:               body.phone,
+      phoneVisible:        body.phoneVisible,
+      emailContact:        body.emailContact,
+      emailContactVisible: body.emailContactVisible,
+      notifyNearbyRides:   body.notifyNearbyRides,
+    });
+
+    if (usernameConflict) {
+      return reply.code(409).send({ error: 'USERNAME_TAKEN' });
+    }
+
     return { ok: true };
   });
 
