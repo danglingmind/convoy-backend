@@ -50,7 +50,7 @@ export async function getNearbyRides(
       JOIN ride_waypoints w ON w.ride_id = r.id AND w.type = 'START'
       JOIN users u ON u.id = r.leader_id
       LEFT JOIN ride_participants rp ON rp.ride_id = r.id
-      WHERE r.status IN ('LOBBY', 'IN_PROGRESS')
+      WHERE r.status IN ('LOBBY', 'ACTIVE', 'PAUSED')
         AND r.ended_at IS NULL
       GROUP BY r.id, w.lat, w.lng, u.name, u.id
     ) sub
