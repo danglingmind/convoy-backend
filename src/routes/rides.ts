@@ -11,6 +11,7 @@ import {
   WaypointInput,
 } from '../db/rideRepo';
 import { updateUserProfile, updateExtendedProfile } from '../db/userRepo';
+import { getNearbyRides } from '../db/discoveryRepo';
 import {
   addParticipant,
   getParticipant,
@@ -105,6 +106,78 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     return { ok: true };
+  });
+
+  // GET /rides/nearby — discover rides starting within radiusKm of caller's location
+  fastify.get('/rides/nearby', {
+    schema: {
+      security,
+      summary: 'Get rides starting near a given location',
+      tags: ['Rides'],
+      querystring: {
+        type: 'object',
+        required: ['lat', 'lng'],
+        properties: {
+          lat:      { type: 'number' },
+          lng:      { type: 'number' },
+          radiusKm: { type: 'number', default: 20 },
+        },
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            rides: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id:                 { type: 'string' },
+                  title:              { type: 'string' },
+                  status:             { type: 'string' },
+                  destinationName:    { type: 'string' },
+                  distanceMeters:     { type: 'number' },
+                  startLat:           { type: 'number' },
+                  startLng:           { type: 'number' },
+                  distanceFromUserKm: { type: 'number' },
+                  riderCount:         { type: 'integer' },
+                  maxParticipants:    { type: 'integer' },
+                  leaderName:         { type: 'string' },
+                  leaderId:           { type: 'string' },
+                  inviteCode:         { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        400: { type: 'object', properties: { error: { type: 'string' } } },
+      },
+    },
+  }, async (request: FastifyRequest, reply) => {
+    const { userId } = request.user;
+    const q = request.query as { lat?: number; lng?: number; radiusKm?: number };
+    if (q.lat == null || q.lng == null) {
+      return reply.code(400).send({ error: 'lat and lng are required' });
+    }
+    const radiusKm = Math.min(q.radiusKm ?? 20, 50);
+    const rows = await getNearbyRides(userId, q.lat, q.lng, radiusKm);
+    return {
+      rides: rows.map(r => ({
+        id:                 r.id,
+        title:              r.title,
+        status:             r.status,
+        destinationName:    r.destination_name,
+        distanceMeters:     r.distance_meters,
+        startLat:           r.start_lat,
+        startLng:           r.start_lng,
+        distanceFromUserKm: Math.round(r.distance_from_user_km * 10) / 10,
+        riderCount:         Number(r.rider_count),
+        maxParticipants:    r.max_participants,
+        leaderName:         r.leader_name,
+        leaderId:           r.leader_id,
+        inviteCode:         r.invite_code,
+      })),
+    };
   });
 
   // POST /rides

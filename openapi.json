@@ -205,6 +205,122 @@
         }
       }
     },
+    "/rides/nearby": {
+      "get": {
+        "summary": "Get rides starting near a given location",
+        "tags": [
+          "Rides"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "number"
+            },
+            "in": "query",
+            "name": "lat",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "number"
+            },
+            "in": "query",
+            "name": "lng",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "number",
+              "default": 20
+            },
+            "in": "query",
+            "name": "radiusKm",
+            "required": false
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "rides": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "destinationName": {
+                            "type": "string"
+                          },
+                          "distanceMeters": {
+                            "type": "number"
+                          },
+                          "startLat": {
+                            "type": "number"
+                          },
+                          "startLng": {
+                            "type": "number"
+                          },
+                          "distanceFromUserKm": {
+                            "type": "number"
+                          },
+                          "riderCount": {
+                            "type": "integer"
+                          },
+                          "maxParticipants": {
+                            "type": "integer"
+                          },
+                          "leaderName": {
+                            "type": "string"
+                          },
+                          "leaderId": {
+                            "type": "string"
+                          },
+                          "inviteCode": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/rides": {
       "post": {
         "summary": "Create a new ride",
