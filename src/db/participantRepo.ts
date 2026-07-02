@@ -23,8 +23,12 @@ export async function addParticipant(
   rideId: string,
   userId: string
 ): Promise<void> {
+  // ON CONFLICT DO NOTHING guards against a race where two concurrent joins both
+  // pass the pre-insert existence check. The UNIQUE(ride_id, user_id) constraint
+  // makes this a no-op for an already-present participant instead of a 500.
   await pool.query(
-    `INSERT INTO ride_participants (ride_id, user_id) VALUES ($1, $2)`,
+    `INSERT INTO ride_participants (ride_id, user_id) VALUES ($1, $2)
+     ON CONFLICT (ride_id, user_id) DO NOTHING`,
     [rideId, userId]
   );
 }
