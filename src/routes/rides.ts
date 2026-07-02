@@ -145,6 +145,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
                   leaderName:         { type: 'string' },
                   leaderId:           { type: 'string' },
                   inviteCode:         { type: 'string' },
+                  viewerRole:         { type: 'string', nullable: true },
                 },
               },
             },
@@ -176,6 +177,9 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
         leaderName:         r.leader_name,
         leaderId:           r.leader_id,
         inviteCode:         r.invite_code,
+        viewerRole:         r.viewer_is_leader ? 'LEADER'
+                          : r.viewer_is_participant ? 'MEMBER'
+                          : null,
       })),
     };
   });

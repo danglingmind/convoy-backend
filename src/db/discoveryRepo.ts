@@ -14,6 +14,8 @@ export interface NearbyRideRow {
   leader_name: string;
   leader_id: string;
   invite_code: string;
+  viewer_is_leader: boolean;
+  viewer_is_participant: boolean;
 }
 
 export async function getNearbyRides(
@@ -37,6 +39,8 @@ export async function getNearbyRides(
         w.lng  AS start_lng,
         u.name AS leader_name,
         COUNT(rp.id) FILTER (WHERE rp.status NOT IN ('LEFT')) AS rider_count,
+        (r.leader_id = $1) AS viewer_is_leader,
+        COALESCE(BOOL_OR(rp.user_id = $1 AND rp.status NOT IN ('LEFT')), false) AS viewer_is_participant,
         6371 * 2 * ASIN(SQRT(
           POWER(SIN(RADIANS((w.lat - $2) / 2)), 2) +
           COS(RADIANS($2)) * COS(RADIANS(w.lat)) *
@@ -48,12 +52,6 @@ export async function getNearbyRides(
       LEFT JOIN ride_participants rp ON rp.ride_id = r.id
       WHERE r.status IN ('LOBBY', 'IN_PROGRESS')
         AND r.ended_at IS NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM ride_participants
-          WHERE ride_id = r.id
-            AND user_id = $1
-            AND status NOT IN ('LEFT')
-        )
       GROUP BY r.id, w.lat, w.lng, u.name, u.id
     ) sub
     WHERE distance_from_user_km <= $4

@@ -294,6 +294,10 @@
                           },
                           "inviteCode": {
                             "type": "string"
+                          },
+                          "viewerRole": {
+                            "type": "string",
+                            "nullable": true
                           }
                         }
                       }
