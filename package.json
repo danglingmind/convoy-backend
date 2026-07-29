@@ -10,7 +10,9 @@
     "dev": "tsx watch src/index.ts",
     "migrate": "tsx src/db/migrate.ts",
     "smoke": "tsx scripts/smoke-test.ts",
-    "get-token": "tsx scripts/get-token.ts"
+    "get-token": "tsx scripts/get-token.ts",
+    "seed:demo": "tsx scripts/seed-demo.ts",
+    "seed:riders": "tsx scripts/seed-riders.ts"
   },
   "dependencies": {
     "@clerk/backend": "^1.21.5",

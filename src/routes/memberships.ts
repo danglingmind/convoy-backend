@@ -11,8 +11,11 @@ import {
 
 const security = [{ bearerAuth: [] }];
 
-// Valid Convoy IAP product IDs — reject any signed transaction for a different app's product.
+// Valid ConvoTrack IAP product IDs — reject any signed transaction for a different app's product.
+// Legacy `convoy.*` IDs are kept so purchases made before the Convoy → ConvoTrack rename still activate.
 const VALID_PRODUCT_IDS = new Set([
+  'danglingmind.convotrack.membership.monthly',
+  'danglingmind.convotrack.membership.yearly',
   'danglingmind.convoy.membership.monthly',
   'danglingmind.convoy.membership.yearly',
 ]);
