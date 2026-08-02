@@ -44,6 +44,14 @@ export interface ActiveRideState {
   spreadSampleSum: number;
   spreadSampleCount: number;
   perRiderGapAccumulator: Map<string, { gapSum: number; gapCount: number }>;
+  // Actual-distance tracking (leader's ridden distance, not the planned route).
+  // Base is the leader's route-snapped max progress; detourMeters adds filtered
+  // GPS movement accrued while the leader is off-route. See summaryService.
+  maxLeaderProgress: number;
+  detourMeters: number;
+  lastLeaderPoint: { lat: number; lng: number } | null;
+  // Running max of the leader-to-tail gap ever observed during the ride.
+  maxGroupSplitMeters: number;
   openRegroup: {
     regroupId: string;
     type: RegroupType;

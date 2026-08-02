@@ -26,6 +26,13 @@ export function runLeaderboardEngine(state: ActiveRideState): void {
   const lastProgress = active[active.length - 1].progress;
   const maxGap = leaderProgress - lastProgress;
 
+  // Running max split — the largest leader-to-tail gap ever observed. Only
+  // meaningful with 2+ riders; a lone rider has no gap. Read at summary time
+  // instead of the final leaderboard snapshot (which misses mid-ride splits).
+  if (active.length >= 2) {
+    state.maxGroupSplitMeters = Math.max(state.maxGroupSplitMeters, maxGap);
+  }
+
   // Compactness sample
   if (state.distanceMeters > 0) {
     state.spreadSampleSum +=

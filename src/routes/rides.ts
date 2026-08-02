@@ -647,6 +647,74 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
+  // DELETE /rides/:rideId/participants/:targetUserId — leader removes a participant
+  fastify.delete('/rides/:rideId/participants/:targetUserId', {
+    schema: {
+      security,
+      summary: 'Remove a participant from a ride (leader only)',
+      tags: ['Rides'],
+      params: {
+        type: 'object',
+        properties: {
+          rideId:       { type: 'string', format: 'uuid' },
+          targetUserId: { type: 'string' },
+        },
+      },
+      response: {
+        200: { type: 'object', properties: { ok: { type: 'boolean' } } },
+        400: errorSchema('CANNOT_REMOVE_LEADER'),
+        403: errorSchema('NOT_LEADER'),
+        404: errorSchema('RIDE_NOT_FOUND | PARTICIPANT_NOT_FOUND'),
+        409: errorSchema('RIDE_ENDED'),
+      },
+    },
+  }, async (request: FastifyRequest, reply) => {
+    const { userId } = request.user;
+    const { rideId, targetUserId } = request.params as {
+      rideId: string;
+      targetUserId: string;
+    };
+
+    const ride = await getRideById(rideId);
+    if (!ride) return reply.code(404).send({ error: 'RIDE_NOT_FOUND' });
+    if (ride.leader_id !== userId) return reply.code(403).send({ error: 'NOT_LEADER' });
+    if (ride.status === 'COMPLETED') return reply.code(409).send({ error: 'RIDE_ENDED' });
+    if (targetUserId === ride.leader_id) {
+      return reply.code(400).send({ error: 'CANNOT_REMOVE_LEADER' });
+    }
+
+    const target = await getParticipant(rideId, targetUserId);
+    if (!target || target.status === 'LEFT') {
+      return reply.code(404).send({ error: 'PARTICIPANT_NOT_FOUND' });
+    }
+
+    await updateParticipantStatus(rideId, targetUserId, 'LEFT');
+
+    // Drop from in-memory state if the ride is already live
+    const state = rideStore.get(rideId);
+    if (state) state.participants.delete(targetUserId);
+
+    // Notify everyone still in the room (including the removed rider) so rosters
+    // update live and the removed rider's app can exit the ride.
+    getIO().to(`ride:${rideId}`).emit('ride:participant_removed', {
+      userId: targetUserId,
+      removedBy: userId,
+    });
+
+    // Kick the removed rider's socket(s) out of the room so they receive no
+    // further updates for this ride.
+    try {
+      const sockets = await getIO().in(`ride:${rideId}`).fetchSockets();
+      for (const s of sockets) {
+        if (s.data.userId === targetUserId) s.leave(`ride:${rideId}`);
+      }
+    } catch {
+      // Socket.IO not initialized (e.g. tests) — DB update + broadcast still applied.
+    }
+
+    return { ok: true };
+  });
+
   // POST /rides/:rideId/join
   fastify.post('/rides/:rideId/join', {
     schema: {
@@ -785,6 +853,10 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       spreadSampleSum: 0,
       spreadSampleCount: 0,
       perRiderGapAccumulator: new Map(),
+      maxLeaderProgress: 0,
+      detourMeters: 0,
+      lastLeaderPoint: null,
+      maxGroupSplitMeters: 0,
       openRegroup: null,
     };
 
@@ -915,13 +987,12 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
 
     const state = rideStore.get(rideId);
 
-    const estDuration = ride.estimated_duration_seconds ?? undefined;
     if (state && ride.started_at) {
-      await generateRideSummary(rideId, ride.started_at, endedAt, state, estDuration);
+      await generateRideSummary(rideId, ride.started_at, endedAt, state);
     } else if (ride.started_at) {
       // In-memory state lost (server restart). Create a fallback summary from DB data.
       await generateFallbackSummary(
-        rideId, ride.leader_id, ride.started_at, endedAt, ride.distance_meters, estDuration
+        rideId, ride.leader_id, ride.started_at, endedAt, ride.distance_meters
       );
     }
 
@@ -959,7 +1030,19 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
             totalRegroups: { type: 'integer' },
             totalEmergencies: { type: 'integer' },
             createdAt: { type: 'string', format: 'date-time' },
-            participants: { type: 'array', items: { type: 'object' } },
+            participants: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  userId: { type: 'string' },
+                  name: { type: 'string' },
+                  avatarUrl: { type: 'string', nullable: true },
+                  rideTitle: { type: 'string', nullable: true },
+                  syncScore: { type: 'integer', nullable: true },
+                },
+              },
+            },
           },
         },
         404: errorSchema('RIDE_NOT_FOUND'),

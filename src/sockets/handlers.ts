@@ -17,6 +17,12 @@ import { RegroupType } from '../types';
 
 const disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+// Off-route detour accumulation guards (see ride:location_update).
+// Below the floor: treat as stationary GPS jitter. Above the ceiling: treat as
+// a GPS spike/teleport rather than real movement at typical update cadence.
+const LEADER_MIN_MOVE_METERS = parseInt(process.env.LEADER_MIN_MOVE_METERS ?? '5', 10);
+const LEADER_MAX_JUMP_METERS = parseInt(process.env.LEADER_MAX_JUMP_METERS ?? '500', 10);
+
 export function setupSocketHandlers(io: Server): void {
   io.on('connection', (socket: Socket) => {
     const userId = socket.data.userId as string;
@@ -129,6 +135,10 @@ export function setupSocketHandlers(io: Server): void {
             spreadSampleSum: 0,
             spreadSampleCount: 0,
             perRiderGapAccumulator: new Map(),
+            maxLeaderProgress: 0,
+            detourMeters: 0,
+            lastLeaderPoint: null,
+            maxGroupSplitMeters: 0,
             openRegroup: null,
           };
 
@@ -284,6 +294,21 @@ export function setupSocketHandlers(io: Server): void {
         );
         p.progress = result.progress;
         p.offRoute = result.offRoute;
+      }
+
+      // Actual-distance tracking — leader only. On-route travel is captured by
+      // the leader's monotonic route progress (jitter-free, since it's snapped).
+      // While off-route, add filtered raw GPS movement so detours still count.
+      if (userId === state.leaderId) {
+        state.maxLeaderProgress = Math.max(state.maxLeaderProgress, p.progress);
+        if (state.lastLeaderPoint && p.offRoute) {
+          const delta = haversine(state.lastLeaderPoint, { lat: data.lat, lng: data.lng });
+          // Floor rejects GPS jitter; ceiling rejects implausible position spikes.
+          if (delta >= LEADER_MIN_MOVE_METERS && delta <= LEADER_MAX_JUMP_METERS) {
+            state.detourMeters += delta;
+          }
+        }
+        state.lastLeaderPoint = { lat: data.lat, lng: data.lng };
       }
 
       // Leaderboard engine (includes compactness sampling + gap accumulation)

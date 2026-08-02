@@ -15,11 +15,13 @@ export async function generateFallbackSummary(
   leaderId: string,
   startedAt: Date,
   endedAt: Date,
-  distanceMeters: number,
-  estimatedDurationSeconds?: number
+  distanceMeters: number
 ): Promise<void> {
-  const durationSeconds = estimatedDurationSeconds ?? Math.round(
-    (endedAt.getTime() - startedAt.getTime()) / 1000
+  // No in-memory telemetry survives here, so distance stays the planned route,
+  // but duration is still the actual wall-clock span rather than the planned ETA.
+  const durationSeconds = Math.max(
+    0,
+    Math.round((endedAt.getTime() - startedAt.getTime()) / 1000)
   );
   const avgSpeedKmh =
     durationSeconds > 0 ? (distanceMeters / durationSeconds) * 3.6 : null;
@@ -48,13 +50,21 @@ export async function generateRideSummary(
   rideId: string,
   startedAt: Date,
   endedAt: Date,
-  state: ActiveRideState,
-  estimatedDurationSeconds?: number
+  state: ActiveRideState
 ): Promise<void> {
-  const durationSeconds = estimatedDurationSeconds ?? Math.round(
-    (endedAt.getTime() - startedAt.getTime()) / 1000
+  // Actual wall-clock ride duration, not the planned ETA. (Includes any paused
+  // time — the ride state does not yet track pause spans separately.)
+  const durationSeconds = Math.max(
+    0,
+    Math.round((endedAt.getTime() - startedAt.getTime()) / 1000)
   );
-  const distanceMeters = state.distanceMeters;
+
+  // Actual distance ridden by the leader = route-snapped progress + off-route
+  // detours. Fall back to the planned route distance only if no GPS was ever
+  // received (e.g. the leader never sent a location update).
+  const traveled = state.maxLeaderProgress + state.detourMeters;
+  const distanceMeters = traveled > 0 ? Math.round(traveled) : state.distanceMeters;
+
   const avgSpeedKmh =
     durationSeconds > 0
       ? (distanceMeters / durationSeconds) * 3.6
@@ -65,11 +75,8 @@ export async function generateRideSummary(
       ? state.spreadSampleSum / state.spreadSampleCount
       : 1.0;
 
-  // Max split ever seen — track via leaderboard entries
-  const maxGroupSplitMeters = Math.max(
-    0,
-    ...state.leaderboard.map((e) => e.gapMeters)
-  );
+  // Largest leader-to-tail gap observed at any point during the ride.
+  const maxGroupSplitMeters = state.maxGroupSplitMeters;
 
   const totalRegroups = await countRegroupEvents(rideId);
   const totalEmergencies = await countEmergencyEvents(rideId);
