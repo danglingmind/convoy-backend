@@ -18,6 +18,32 @@ import { RegroupType } from '../types';
 
 const disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+/**
+ * Broadcast the authoritative lobby roster (from the DB) to everyone in the ride room.
+ * Called on every join so membership stays server-authoritative for all members — instead of
+ * relying on per-client `participant_joined` deltas, which a client can miss or fail to apply
+ * (e.g. a race with its REST seed, or a decode hiccup), leaving riders invisible to each other.
+ */
+async function broadcastLobbyRoster(io: Server, rideId: string): Promise<void> {
+  const ride = await getRideById(rideId);
+  if (!ride) return;
+  const participants = await getParticipantsWithUsers(rideId);
+  io.to(`ride:${rideId}`).emit('ride:lobby_roster', {
+    leaderId: ride.leader_id,
+    participants: participants
+      .filter((p) => p.status !== 'LEFT')
+      .map((p) => ({
+        userId: p.user_id,
+        name: p.name,
+        avatarUrl: p.avatar_url ?? null,
+        status: p.status,
+        isLeader: p.user_id === ride.leader_id,
+        joinedAt:
+          p.joined_at instanceof Date ? p.joined_at.toISOString() : p.joined_at,
+      })),
+  });
+}
+
 // Off-route detour accumulation guards (see ride:location_update).
 // Below the floor: treat as stationary GPS jitter. Above the ceiling: treat as
 // a GPS spike/teleport rather than real movement at typical update cadence.
@@ -57,6 +83,10 @@ export function setupSocketHandlers(io: Server): void {
       // Presence: joining counts as a heartbeat; broadcast the fresh online set to the room.
       touchPresence(rideId, userId);
       broadcastPresence(io, rideId);
+
+      // Push the authoritative roster to the WHOLE room so every member (not just the joiner)
+      // sees the up-to-date participant list — robust even if a participant_joined delta is missed.
+      await broadcastLobbyRoster(io, rideId).catch(() => {});
 
       let state = rideStore.get(rideId);
       if (state) {
