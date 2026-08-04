@@ -4,6 +4,7 @@ import { computeProgress } from '../engines/progressEngine';
 import { runLeaderboardEngine } from '../engines/leaderboardEngine';
 import { haversine } from '../utils/geo';
 import { enqueueBroadcast, buildStatePayload } from './broadcaster';
+import { touchPresence, broadcastPresence } from './presence';
 import {
   updateParticipantStatus,
   getParticipant,
@@ -52,6 +53,10 @@ export function setupSocketHandlers(io: Server): void {
       }
 
       socket.join(`ride:${rideId}`);
+
+      // Presence: joining counts as a heartbeat; broadcast the fresh online set to the room.
+      touchPresence(rideId, userId);
+      broadcastPresence(io, rideId);
 
       let state = rideStore.get(rideId);
       if (state) {
@@ -194,6 +199,12 @@ export function setupSocketHandlers(io: Server): void {
       io.to(`ride:${rideId}`).emit('ride:participant_left', { userId });
     });
 
+    // ride:heartbeat — periodic liveness ping from a foregrounded client. Keeps the user in
+    // the ride's online set (presence.ts); the sweeper broadcasts ride:presence on change.
+    socket.on('ride:heartbeat', ({ rideId }: { rideId: string }) => {
+      if (rideId) touchPresence(rideId, userId);
+    });
+
     // ride:ready (ack)
     socket.on(
       'ride:ready',
@@ -269,6 +280,9 @@ export function setupSocketHandlers(io: Server): void {
       battery: number | null;
       signalStrength: 'STRONG' | 'MODERATE' | 'WEAK' | null;
     }) => {
+      // A live location broadcast is also a presence heartbeat (covers active navigation).
+      touchPresence(data.rideId, userId);
+
       const state = rideStore.get(data.rideId);
       if (!state || state.status !== 'ACTIVE') return;
 
@@ -516,12 +530,13 @@ export function setupSocketHandlers(io: Server): void {
       }
     );
 
-    // Disconnect handling. MUST use 'disconnecting' (not 'disconnect'): by the time the
-    // 'disconnect' event fires, Socket.IO has already removed the socket from all its rooms,
-    // so socket.rooms is empty and no 'ride:participant_offline' would ever be broadcast —
-    // leaving presence dots stuck green on other devices. 'disconnecting' still has the rooms.
+    // Disconnect handling. Presence is heartbeat/TTL-driven (presence.ts), NOT socket-based:
+    // a socket drop no longer flips the dot. The sweeper drops the user from ride:presence once
+    // their heartbeats lapse (~TTL), which is robust to mobile sockets that linger after the app
+    // is locked/backgrounded/killed. Roster status stays clean (no DB 'DISCONNECTED' write), so
+    // a brief blip never shows a stale "disconnected" badge. We only mark the in-memory engine
+    // state so the active-ride leaderboard can react.
     socket.on('disconnecting', () => {
-      // Find all rooms this socket was in
       const rooms = Array.from(socket.rooms).filter((r) =>
         r.startsWith('ride:')
       );
@@ -533,19 +548,6 @@ export function setupSocketHandlers(io: Server): void {
           const p = state.participants.get(userId);
           if (p) p.status = 'DISCONNECTED';
         }
-
-        // Notify all clients in the room so lobby presence dots update immediately
-        io.to(room).emit('ride:participant_offline', { userId });
-
-        const timerKey = `${rideId}:${userId}`;
-        const timer = setTimeout(async () => {
-          disconnectTimers.delete(timerKey);
-          await updateParticipantStatus(rideId, userId, 'DISCONNECTED').catch(
-            () => {}
-          );
-        }, 30_000);
-
-        disconnectTimers.set(timerKey, timer);
       }
     });
   });

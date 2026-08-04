@@ -3,6 +3,7 @@ import { IncomingMessage, Server as HttpServer, ServerResponse } from 'http';
 import { verifyToken } from '@clerk/backend';
 import { upsertUser, getUserById } from '../db/userRepo';
 import { setupSocketHandlers } from './handlers';
+import { startPresenceSweeper } from './presence';
 
 let io: Server | null = null;
 
@@ -67,6 +68,7 @@ export function initSocketServer(
   });
 
   setupSocketHandlers(io);
+  startPresenceSweeper(io);
 
   return io;
 }
