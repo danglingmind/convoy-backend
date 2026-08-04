@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import swagger from '@fastify/swagger';
 import { clerkAuth } from './middleware/auth';
 import { healthRoutes } from './routes/health';
+import { deeplinkRoutes } from './routes/deeplink';
 import { ridesRoutes } from './routes/rides';
 import { membershipRoutes } from './routes/memberships';
 
@@ -44,6 +45,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Public routes (no auth)
   await fastify.register(healthRoutes);
+  await fastify.register(deeplinkRoutes);
 
   // Protected routes
   await fastify.register(async (protected_) => {

@@ -516,8 +516,11 @@ export function setupSocketHandlers(io: Server): void {
       }
     );
 
-    // Disconnect handling
-    socket.on('disconnect', () => {
+    // Disconnect handling. MUST use 'disconnecting' (not 'disconnect'): by the time the
+    // 'disconnect' event fires, Socket.IO has already removed the socket from all its rooms,
+    // so socket.rooms is empty and no 'ride:participant_offline' would ever be broadcast —
+    // leaving presence dots stuck green on other devices. 'disconnecting' still has the rooms.
+    socket.on('disconnecting', () => {
       // Find all rooms this socket was in
       const rooms = Array.from(socket.rooms).filter((r) =>
         r.startsWith('ride:')
