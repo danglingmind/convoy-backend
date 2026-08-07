@@ -480,6 +480,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
             distanceMeters: { type: 'number' },
             estimatedDurationSeconds: { type: 'number' },
             maxAllowedParticipants: { type: 'integer' },
+            routePolyline: { type: 'string', nullable: true, description: 'Google encoded polyline of the leader-selected route' },
             startedAt: { type: 'string', format: 'date-time', nullable: true },
             endedAt: { type: 'string', format: 'date-time', nullable: true },
             createdAt: { type: 'string', format: 'date-time' },
@@ -505,7 +506,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
     },
   }, async (request: FastifyRequest, reply) => {
     const { rideId } = request.params as { rideId: string };
-    const ride = await getRideById(rideId);
+    const ride = await getRideWithPolyline(rideId);
 
     if (!ride) {
       return reply.code(404).send({ error: 'RIDE_NOT_FOUND' });
@@ -528,6 +529,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       distanceMeters: ride.distance_meters,
       estimatedDurationSeconds: ride.estimated_duration_seconds,
       maxAllowedParticipants: ride.max_allowed_participants,
+      routePolyline: ride.route_polyline,
       startedAt: ride.started_at,
       endedAt: ride.ended_at,
       createdAt: ride.created_at,
@@ -635,6 +637,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       distanceMeters:           body.distanceMeters,
       estimatedDurationSeconds: body.estimatedDurationSeconds,
       maxAllowedParticipants:   maxAllowed,
+      routePolyline:            body.routePolyline,
       waypoints: body.waypoints.map((w) => ({
         order: w.order,
         name:  w.name,

@@ -15,9 +15,11 @@ export function initSocketServer(
       origin: process.env.ALLOWED_ORIGINS ?? '*',
       methods: ['GET', 'POST'],
     },
-    // Detect dead connections (killed app, dropped network) quickly so presence dots
-    // don't linger green. A missed pong within pingTimeout of a ping fires 'disconnect'
-    // (→ ride:participant_offline). ~10s interval + 10s timeout ⇒ offline within ~20s.
+    // Transport keepalive. NOTE: presence (online/offline) is NOT inferred from socket
+    // connect/disconnect — mobile sockets linger after backgrounding, so that was unreliable.
+    // Online status is driven entirely by the heartbeat/TTL sweeper in presence.ts (clients
+    // emit ride:heartbeat; a lapsed TTL drops them from the next ride:presence snapshot). These
+    // ping settings only detect a dead transport for cleanup, they do not gate presence.
     pingInterval: 10_000,
     pingTimeout: 10_000,
   });

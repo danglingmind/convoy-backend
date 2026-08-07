@@ -16,8 +16,12 @@ import { Server } from 'socket.io';
  * (`{ online: string[] }`) to the room whenever the online set changes.
  */
 
-const PRESENCE_TTL_MS = 20_000; // online if seen within this window
-const SWEEP_MS = 5_000; // how often we re-evaluate + broadcast changes
+// Paired with the client's 5s heartbeat (RideRealtimeSession): a 15s TTL tolerates ~3 missed
+// heartbeats, so brief mobile blips won't false-offline, while a real drop now reflects in
+// ~15–18s (TTL + one sweep) instead of ~25s. (re)join still broadcasts presence immediately,
+// so coming back online is instant.
+const PRESENCE_TTL_MS = 15_000; // online if seen within this window
+const SWEEP_MS = 3_000; // how often we re-evaluate + broadcast changes
 const GC_MS = PRESENCE_TTL_MS * 3; // drop long-stale entries
 
 // rideId -> (userId -> lastSeen epoch ms)

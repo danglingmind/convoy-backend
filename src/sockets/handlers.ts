@@ -16,8 +16,6 @@ import { createRegroupEvent, resolveRegroupEvent } from '../db/regroupRepo';
 import { createEmergencyEvent } from '../db/emergencyRepo';
 import { RegroupType } from '../types';
 
-const disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
 // Off-route detour accumulation guards (see ride:location_update).
 // Below the floor: treat as stationary GPS jitter. Above the ceiling: treat as
 // a GPS spike/teleport rather than real movement at typical update cadence.
@@ -43,14 +41,6 @@ export function setupSocketHandlers(io: Server): void {
         return;
       }
       console.log(`[ride:join] OK — userId=${userId} joined rideId=${rideId}`);
-
-      // Cancel pending disconnect timer if reconnecting
-      const timerKey = `${rideId}:${userId}`;
-      const timer = disconnectTimers.get(timerKey);
-      if (timer) {
-        clearTimeout(timer);
-        disconnectTimers.delete(timerKey);
-      }
 
       socket.join(`ride:${rideId}`);
 
