@@ -554,11 +554,11 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
     };
   });
 
-  // PATCH /rides/:rideId — update ride details (leader only, LOBBY only)
+  // PATCH /rides/:rideId — update ride details (leader only; any state except COMPLETED)
   fastify.patch('/rides/:rideId', {
     schema: {
       security,
-      summary: 'Update ride details (leader, LOBBY only)',
+      summary: 'Update ride details (leader only; any state except COMPLETED)',
       tags: ['Rides'],
       params: {
         type: 'object',
@@ -585,7 +585,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
         400: errorSchema('INVALID_WAYPOINTS'),
         403: errorSchema('NOT_LEADER'),
         404: errorSchema('RIDE_NOT_FOUND'),
-        409: errorSchema('RIDE_NOT_IN_LOBBY'),
+        409: errorSchema('RIDE_ENDED'),
       },
     },
   }, async (request: FastifyRequest, reply) => {
@@ -609,7 +609,8 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
     const ride = await getRideById(rideId);
     if (!ride) return reply.code(404).send({ error: 'RIDE_NOT_FOUND' });
     if (ride.leader_id !== userId) return reply.code(403).send({ error: 'NOT_LEADER' });
-    if (ride.status !== 'LOBBY') return reply.code(409).send({ error: 'RIDE_NOT_IN_LOBBY' });
+    // The leader may edit in any state except COMPLETED (LOBBY, ACTIVE and PAUSED are all editable).
+    if (ride.status === 'COMPLETED') return reply.code(409).send({ error: 'RIDE_ENDED' });
 
     // Cap maxAllowedParticipants to the plan limit recorded at ride creation time
     const planMax = (ride.membership_snapshot as { maxRidersPerRide: number }).maxRidersPerRide;
@@ -627,6 +628,17 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       maxAllowedParticipants:   maxAllowed,
       waypoints: body.waypoints as WaypointInput[],
     });
+
+    // If the ride is live (ACTIVE/PAUSED), swap the in-memory route geometry so progress,
+    // off-route and the leaderboard follow the NEW route. computeProgress re-projects each
+    // rider's GPS onto routePoints every tick, so this re-syncs on the next location update
+    // — no need to migrate existing progress values. LOBBY rides have no live state yet.
+    const liveState = rideStore.get(rideId);
+    if (liveState) {
+      liveState.distanceMeters = body.distanceMeters;
+      liveState.routePoints    = decodePolyline(body.routePolyline);
+      liveState.cumulativeDist = computeCumulativeDist(liveState.routePoints);
+    }
 
     getIO().to(`ride:${rideId}`).emit('ride:updated', {
       rideId,
