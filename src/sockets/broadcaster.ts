@@ -35,6 +35,16 @@ export function buildStatePayload(state: ActiveRideState) {
           createdAt: state.openRegroup.createdAt,
         }
       : null,
+    openEmergency: state.openEmergency
+      ? {
+          emergencyId: state.openEmergency.emergencyId,
+          userId: state.openEmergency.userId,
+          lat: state.openEmergency.lat,
+          lng: state.openEmergency.lng,
+          message: state.openEmergency.message,
+          createdAt: state.openEmergency.createdAt,
+        }
+      : null,
   };
 }
 

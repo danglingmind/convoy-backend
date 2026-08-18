@@ -8,6 +8,7 @@ import {
   getWaypoints,
   updateRide,
   updateRideStatus,
+  deleteRide,
   WaypointInput,
 } from '../db/rideRepo';
 import { updateUserProfile, updateExtendedProfile } from '../db/userRepo';
@@ -662,6 +663,52 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
+  // DELETE /rides/:rideId — leader deletes the ride entirely (any state except COMPLETED)
+  fastify.delete('/rides/:rideId', {
+    schema: {
+      security,
+      summary: 'Delete a ride (leader only; any state except COMPLETED)',
+      tags: ['Rides'],
+      params: {
+        type: 'object',
+        properties: { rideId: { type: 'string', format: 'uuid' } },
+      },
+      response: {
+        200: { type: 'object', properties: { ok: { type: 'boolean' } } },
+        403: errorSchema('NOT_LEADER'),
+        404: errorSchema('RIDE_NOT_FOUND'),
+        409: errorSchema('RIDE_ENDED'),
+      },
+    },
+  }, async (request: FastifyRequest, reply) => {
+    const { userId } = request.user;
+    const { rideId } = request.params as { rideId: string };
+
+    const ride = await getRideById(rideId);
+    if (!ride) return reply.code(404).send({ error: 'RIDE_NOT_FOUND' });
+    if (ride.leader_id !== userId) return reply.code(403).send({ error: 'NOT_LEADER' });
+    // COMPLETED rides own a ride_summaries row (no ON DELETE CASCADE) and are historical
+    // records — they can never be deleted.
+    if (ride.status === 'COMPLETED') return reply.code(409).send({ error: 'RIDE_ENDED' });
+
+    // Notify everyone in the room BEFORE the row disappears so their apps can exit the ride,
+    // then drop any live in-memory state and hard-delete (cascades to children).
+    getIO().to(`ride:${rideId}`).emit('ride:deleted', { rideId, deletedBy: userId });
+
+    rideStore.delete(rideId);
+
+    try {
+      const sockets = await getIO().in(`ride:${rideId}`).fetchSockets();
+      for (const s of sockets) s.leave(`ride:${rideId}`);
+    } catch {
+      // Socket.IO not initialized (e.g. tests) — DB delete + broadcast still applied.
+    }
+
+    await deleteRide(rideId);
+
+    return { ok: true };
+  });
+
   // DELETE /rides/:rideId/participants/:targetUserId — leader removes a participant
   fastify.delete('/rides/:rideId/participants/:targetUserId', {
     schema: {
@@ -873,6 +920,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       lastLeaderPoint: null,
       maxGroupSplitMeters: 0,
       openRegroup: null,
+      openEmergency: null,
     };
 
     rideStore.set(rideId, state);

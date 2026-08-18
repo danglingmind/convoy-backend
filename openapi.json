@@ -767,6 +767,11 @@
                     "maxAllowedParticipants": {
                       "type": "integer"
                     },
+                    "routePolyline": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Google encoded polyline of the leader-selected route"
+                    },
                     "startedAt": {
                       "type": "string",
                       "format": "date-time",
@@ -872,7 +877,7 @@
         }
       },
       "patch": {
-        "summary": "Update ride details (leader, LOBBY only)",
+        "summary": "Update ride details (leader only; any state except COMPLETED)",
         "tags": [
           "Rides"
         ],
@@ -1051,7 +1056,94 @@
                   "properties": {
                     "error": {
                       "type": "string",
-                      "description": "RIDE_NOT_IN_LOBBY"
+                      "description": "RIDE_ENDED"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a ride (leader only; any state except COMPLETED)",
+        "tags": [
+          "Rides"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "rideId",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "NOT_LEADER"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "RIDE_NOT_FOUND"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "RIDE_ENDED"
                     }
                   }
                 }

@@ -221,6 +221,14 @@ export async function updateRide(rideId: string, input: UpdateRideInput): Promis
   }
 }
 
+export async function deleteRide(rideId: string): Promise<void> {
+  // ride_waypoints, ride_participants, regroup_events and emergency_events all
+  // reference rides(id) ON DELETE CASCADE, so a single DELETE tears down the ride
+  // and its children. ride_summaries has NO cascade, but summaries only exist for
+  // COMPLETED rides — callers must block deletion of completed rides.
+  await pool.query('DELETE FROM rides WHERE id = $1', [rideId]);
+}
+
 export async function updateRideStatus(
   id: string,
   status: RideStatus,

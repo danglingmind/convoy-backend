@@ -135,6 +135,7 @@ export function setupSocketHandlers(io: Server): void {
             lastLeaderPoint: null,
             maxGroupSplitMeters: 0,
             openRegroup: null,
+            openEmergency: null,
           };
 
           rideStore.set(rideId, rebuiltState);
@@ -506,6 +507,17 @@ export function setupSocketHandlers(io: Server): void {
 
         const createdAt = new Date().toISOString();
 
+        // Hold the emergency open so its pin + siren persist on every client (including late
+        // joiners, via buildStatePayload) until the creator or the leader dismisses it.
+        state.openEmergency = {
+          emergencyId,
+          userId,
+          lat: data.lat,
+          lng: data.lng,
+          message: data.message,
+          createdAt,
+        };
+
         if (typeof ack === 'function') ack({ ok: true, emergencyId });
 
         io.to(`ride:${data.rideId}`).emit('ride:emergency_started', {
@@ -516,6 +528,40 @@ export function setupSocketHandlers(io: Server): void {
           message: data.message,
           createdAt,
           priority: 'CRITICAL',
+        });
+      }
+    );
+
+    // ride:emergency_dismiss (ack) — only the creator or the ride leader may clear an open emergency.
+    socket.on(
+      'ride:emergency_dismiss',
+      async (
+        data: { rideId: string; emergencyId: string },
+        ack: (res: unknown) => void
+      ) => {
+        const state = rideStore.get(data.rideId);
+        if (!state) {
+          if (typeof ack === 'function') ack({ ok: false, error: 'RIDE_NOT_ACTIVE' });
+          return;
+        }
+        if (!state.openEmergency || state.openEmergency.emergencyId !== data.emergencyId) {
+          if (typeof ack === 'function') ack({ ok: false, error: 'EMERGENCY_NOT_FOUND' });
+          return;
+        }
+        // Authorization: raiser or leader only.
+        if (userId !== state.openEmergency.userId && userId !== state.leaderId) {
+          if (typeof ack === 'function') ack({ ok: false, error: 'NOT_AUTHORIZED' });
+          return;
+        }
+
+        const { emergencyId } = state.openEmergency;
+        state.openEmergency = null;
+
+        if (typeof ack === 'function') ack({ ok: true });
+
+        io.to(`ride:${data.rideId}`).emit('ride:emergency_resolved', {
+          emergencyId,
+          resolvedAt: new Date().toISOString(),
         });
       }
     );

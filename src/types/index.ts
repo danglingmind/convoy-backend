@@ -61,6 +61,16 @@ export interface ActiveRideState {
     createdAt: string;
     arrivedRiders: Set<string>;
   } | null;
+  // A raised emergency stays open (pin + repeating siren on clients) until the creator or the
+  // ride leader explicitly dismisses it — unlike regroup there is no proximity/arrival auto-resolve.
+  openEmergency: {
+    emergencyId: string;
+    userId: string;
+    lat: number;
+    lng: number;
+    message: string;
+    createdAt: string;
+  } | null;
 }
 
 export interface AuthUser {
