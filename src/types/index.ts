@@ -50,6 +50,15 @@ export interface ActiveRideState {
   maxLeaderProgress: number;
   detourMeters: number;
   lastLeaderPoint: { lat: number; lng: number } | null;
+  // Raw filtered GPS distance for the leader, accumulated on AND off route. Backstop for
+  // distance when route-snapped progress never advances (fixes that never project onto the
+  // route, a malformed polyline) — without it those rides report 0 m ridden.
+  leaderRawMeters: number;
+  // Seconds the leader was actually moving, for a moving-average speed rather than one
+  // diluted by time spent stopped at lights, fuel stops and regroups.
+  movingSeconds: number;
+  // Server receipt time of the last leader fix; the base for each moving-time increment.
+  lastLeaderTs: number | null;
   // Running max of the leader-to-tail gap ever observed during the ride.
   maxGroupSplitMeters: number;
   openRegroup: {

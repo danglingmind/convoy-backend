@@ -8,6 +8,27 @@ import {
 import { countRegroupEvents } from '../db/regroupRepo';
 import { countEmergencyEvents } from '../db/emergencyRepo';
 
+// Below this much sampled moving time we don't trust it as a speed basis and fall back to
+// wall-clock, rather than dividing a real distance by a couple of stray seconds.
+const MIN_MOVING_SECONDS = 30;
+// Sanity ceiling for a reported average. Above this the inputs disagree (typically the
+// planned route distance paired with a ride that ended almost immediately), and a wrong
+// number stated confidently is worse than no number.
+const MAX_PLAUSIBLE_AVG_KMH = 200;
+
+/**
+ * Average speed for the summary, or null when the inputs can't support one.
+ *
+ * Returning null matters: the clients render null as "--" but render 0 as a claim that the
+ * ride averaged 0 km/h, which is what produced the bogus zero on real rides.
+ */
+function averageSpeedKmh(distanceMeters: number, seconds: number): number | null {
+  if (distanceMeters <= 0 || seconds <= 0) return null;
+  const kmh = (distanceMeters / seconds) * 3.6;
+  if (!Number.isFinite(kmh) || kmh > MAX_PLAUSIBLE_AVG_KMH) return null;
+  return kmh;
+}
+
 // Called when the ride's in-memory state was lost (e.g. server restart).
 // Produces a minimal summary from persisted DB data so the ride appears in history.
 export async function generateFallbackSummary(
@@ -23,8 +44,11 @@ export async function generateFallbackSummary(
     0,
     Math.round((endedAt.getTime() - startedAt.getTime()) / 1000)
   );
-  const avgSpeedKmh =
-    durationSeconds > 0 ? (distanceMeters / durationSeconds) * 3.6 : null;
+  // No telemetry survived, so there is no moving time to divide by — wall-clock is all we have.
+  // Note this pairs the PLANNED distance with the ACTUAL duration, so the plausibility guard in
+  // averageSpeedKmh is doing real work here: a ride abandoned after a minute would otherwise
+  // report the whole planned route covered in that minute.
+  const avgSpeedKmh = averageSpeedKmh(distanceMeters, durationSeconds);
 
   const [totalRegroups, totalEmergencies] = await Promise.all([
     countRegroupEvents(rideId),
@@ -62,13 +86,28 @@ export async function generateRideSummary(
   // Actual distance ridden by the leader = route-snapped progress + off-route
   // detours. Fall back to the planned route distance only if no GPS was ever
   // received (e.g. the leader never sent a location update).
+  // Preferred: snapped progress + filtered off-route detours. Then raw leader GPS distance,
+  // which covers rides where snapped progress never advanced (fixes that never projected onto
+  // the route, a malformed polyline) — those used to fall straight through to the planned
+  // distance, or to 0 when the ride was created with distanceMeters: 0. Planned distance is the
+  // last resort, and 0 is now allowed to mean "unknown" rather than "stood still".
   const traveled = state.maxLeaderProgress + state.detourMeters;
-  const distanceMeters = traveled > 0 ? Math.round(traveled) : state.distanceMeters;
+  const distanceMeters = Math.round(
+    traveled > 0
+      ? traveled
+      : state.leaderRawMeters > 0
+        ? state.leaderRawMeters
+        : state.distanceMeters
+  );
 
-  const avgSpeedKmh =
-    durationSeconds > 0
-      ? (distanceMeters / durationSeconds) * 3.6
-      : null;
+  // Moving average: distance over time actually spent riding. Wall-clock duration includes
+  // every traffic light, fuel stop and regroup wait, which dragged the figure well below what
+  // riders saw on their speedo. Falls back to wall-clock when too little moving time was
+  // sampled to be trustworthy (a very short ride, or sparse fixes).
+  const movingSeconds = Math.round(state.movingSeconds);
+  const speedBasisSeconds =
+    movingSeconds >= MIN_MOVING_SECONDS ? movingSeconds : durationSeconds;
+  const avgSpeedKmh = averageSpeedKmh(distanceMeters, speedBasisSeconds);
 
   const compactnessScore =
     state.spreadSampleCount > 0

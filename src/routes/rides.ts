@@ -342,8 +342,21 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get('/rides/me', {
     schema: {
       security,
-      summary: 'Get current user rides (all statuses)',
+      summary: 'Get current user rides, optionally filtered by status',
       tags: ['Rides'],
+      querystring: {
+        type: 'object',
+        properties: {
+          status: {
+            type: 'string',
+            description:
+              "Comma-separated ride statuses to include, e.g. 'COMPLETED' for a history list " +
+              "or 'LOBBY,ACTIVE,PAUSED' for rides still in progress. Omit for every status. " +
+              'Filtering here rather than on the client means the 50-row limit is spent on rows ' +
+              'the caller will actually show.',
+          },
+        },
+      },
       response: {
         200: {
           type: 'object',
@@ -374,6 +387,12 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
     },
   }, async (request: FastifyRequest, reply) => {
     const { userId } = request.user;
+    const statusParam = (request.query as { status?: string }).status;
+    const statuses = statusParam
+      ? statusParam.split(',').map((v) => v.trim().toUpperCase()).filter(Boolean)
+      : [];
+    // Passing null for the array leaves the filter inert, so an omitted `status` keeps the
+    // previous behaviour of returning every status.
     const { rows } = await pool.query(
       `SELECT r.id, r.title, r.status, r.leader_id, r.invite_code,
               r.started_at, r.ended_at, r.created_at, r.distance_meters,
@@ -383,9 +402,10 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
        LEFT JOIN ride_summaries rs ON rs.ride_id = r.id
        WHERE rp.user_id = $1
          AND rp.status != 'LEFT'
+         AND ($2::text[] IS NULL OR r.status = ANY($2::text[]))
        ORDER BY r.created_at DESC
        LIMIT 50`,
-      [userId]
+      [userId, statuses.length > 0 ? statuses : null]
     );
 
     return {
@@ -918,6 +938,9 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       maxLeaderProgress: 0,
       detourMeters: 0,
       lastLeaderPoint: null,
+      leaderRawMeters: 0,
+      movingSeconds: 0,
+      lastLeaderTs: null,
       maxGroupSplitMeters: 0,
       openRegroup: null,
       openEmergency: null,

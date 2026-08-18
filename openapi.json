@@ -533,9 +533,20 @@
     },
     "/rides/me": {
       "get": {
-        "summary": "Get current user rides (all statuses)",
+        "summary": "Get current user rides, optionally filtered by status",
         "tags": [
           "Rides"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "description": "Comma-separated ride statuses to include, e.g. 'COMPLETED' for a history list or 'LOBBY,ACTIVE,PAUSED' for rides still in progress. Omit for every status. Filtering here rather than on the client means the 50-row limit is spent on rows the caller will actually show."
+          }
         ],
         "security": [
           {

@@ -21,6 +21,11 @@ import { RegroupType } from '../types';
 // a GPS spike/teleport rather than real movement at typical update cadence.
 const LEADER_MIN_MOVE_METERS = parseInt(process.env.LEADER_MIN_MOVE_METERS ?? '5', 10);
 const LEADER_MAX_JUMP_METERS = parseInt(process.env.LEADER_MAX_JUMP_METERS ?? '500', 10);
+// Moving-time thresholds. 1.5 m/s (~5.4 km/h) separates riding from standing at a light with
+// GPS jitter. Gaps longer than 90 s are not credited as moving time at all: a backgrounded app
+// or a tunnel would otherwise donate its entire silence to the ride's moving time.
+const MOVING_MIN_SPEED_MPS = parseFloat(process.env.MOVING_MIN_SPEED_MPS ?? '1.5');
+const MOVING_MAX_GAP_SECONDS = parseInt(process.env.MOVING_MAX_GAP_SECONDS ?? '90', 10);
 
 export function setupSocketHandlers(io: Server): void {
   io.on('connection', (socket: Socket) => {
@@ -133,6 +138,9 @@ export function setupSocketHandlers(io: Server): void {
             maxLeaderProgress: 0,
             detourMeters: 0,
             lastLeaderPoint: null,
+            leaderRawMeters: 0,
+            movingSeconds: 0,
+            lastLeaderTs: null,
             maxGroupSplitMeters: 0,
             openRegroup: null,
             openEmergency: null,
@@ -306,14 +314,41 @@ export function setupSocketHandlers(io: Server): void {
       // While off-route, add filtered raw GPS movement so detours still count.
       if (userId === state.leaderId) {
         state.maxLeaderProgress = Math.max(state.maxLeaderProgress, p.progress);
-        if (state.lastLeaderPoint && p.offRoute) {
-          const delta = haversine(state.lastLeaderPoint, { lat: data.lat, lng: data.lng });
+        const now = Date.now();
+        const point = { lat: data.lat, lng: data.lng };
+
+        if (state.lastLeaderPoint) {
+          const delta = haversine(state.lastLeaderPoint, point);
           // Floor rejects GPS jitter; ceiling rejects implausible position spikes.
-          if (delta >= LEADER_MIN_MOVE_METERS && delta <= LEADER_MAX_JUMP_METERS) {
+          const real = delta >= LEADER_MIN_MOVE_METERS && delta <= LEADER_MAX_JUMP_METERS;
+
+          if (real) {
+            // Accumulated on AND off route, unlike detourMeters. Only used as a fallback in
+            // the summary, but without it a ride whose snapped progress never advanced has no
+            // distance at all to report.
+            state.leaderRawMeters += delta;
+          }
+          if (real && p.offRoute) {
             state.detourMeters += delta;
           }
+
+          // Moving time: credit the gap since the last fix only if the leader covered it at a
+          // riding pace. Uses server receipt time, not the client's clock, so device clock skew
+          // can't inflate or reverse it.
+          if (state.lastLeaderTs !== null) {
+            const dt = (now - state.lastLeaderTs) / 1000;
+            if (
+              dt > 0 && dt <= MOVING_MAX_GAP_SECONDS &&
+              delta <= LEADER_MAX_JUMP_METERS &&
+              delta / dt >= MOVING_MIN_SPEED_MPS
+            ) {
+              state.movingSeconds += dt;
+            }
+          }
         }
-        state.lastLeaderPoint = { lat: data.lat, lng: data.lng };
+
+        state.lastLeaderPoint = point;
+        state.lastLeaderTs = now;
       }
 
       // Leaderboard engine (includes compactness sampling + gap accumulation)
