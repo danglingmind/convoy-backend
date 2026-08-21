@@ -49,6 +49,20 @@ export function setupSocketHandlers(io: Server): void {
 
       socket.join(`ride:${rideId}`);
 
+      // One shape for every ride:participant_joined emit. Two of the three call sites used to
+      // send only { userId, name, avatarUrl }; the iOS RideParticipant decoder requires status,
+      // isLeader and joinedAt too, so those events failed to decode and were dropped silently.
+      // Nothing else repairs the roster afterwards — ride:state_update carries live telemetry,
+      // not roster membership — so a rider joining an ACTIVE ride never appeared for anyone.
+      const joinedPayload = (leaderIdForRide: string) => ({
+        userId,
+        name: userName,
+        avatarUrl: userAvatar,
+        status: participant.status === 'READY' ? 'READY' : 'JOINED',
+        isLeader: userId === leaderIdForRide,
+        joinedAt: (participant.joined_at ?? new Date()).toISOString(),
+      });
+
       // Presence: joining counts as a heartbeat; broadcast the fresh online set to the room.
       touchPresence(rideId, userId);
       broadcastPresence(io, rideId);
@@ -80,11 +94,7 @@ export function setupSocketHandlers(io: Server): void {
 
         // Broadcast join to room first, then push updated state to everyone
         // so navigation views on existing clients pick up the new participant immediately.
-        io.to(`ride:${rideId}`).emit('ride:participant_joined', {
-          userId,
-          name: userName,
-          avatarUrl: userAvatar,
-        });
+        io.to(`ride:${rideId}`).emit('ride:participant_joined', joinedPayload(state.leaderId));
         io.to(`ride:${rideId}`).emit('ride:state_update', buildStatePayload(state));
       } else {
         // No in-memory state — fetch from DB to determine ride status
@@ -148,22 +158,11 @@ export function setupSocketHandlers(io: Server): void {
 
           rideStore.set(rideId, rebuiltState);
 
-          io.to(`ride:${rideId}`).emit('ride:participant_joined', {
-            userId,
-            name: userName,
-            avatarUrl: userAvatar,
-          });
+          io.to(`ride:${rideId}`).emit('ride:participant_joined', joinedPayload(leaderId));
           io.to(`ride:${rideId}`).emit('ride:state_update', buildStatePayload(rebuiltState));
         } else {
           // LOBBY — broadcast join and send full roster to joining client
-          io.to(`ride:${rideId}`).emit('ride:participant_joined', {
-            userId,
-            name: userName,
-            avatarUrl: userAvatar,
-            status: 'JOINED',
-            isLeader: userId === leaderId,
-            joinedAt: new Date().toISOString(),
-          });
+          io.to(`ride:${rideId}`).emit('ride:participant_joined', joinedPayload(leaderId));
 
           // Send full roster snapshot to the joining client only — ensures the
           // lobby roster is always populated even if the REST GET /rides/:id failed
