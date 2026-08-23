@@ -26,6 +26,7 @@ import { canUserParticipate, getUserPlanOrFree } from '../services/quotaService'
 import { generateRideSummary, generateFallbackSummary } from '../services/summaryService';
 import { generateInviteCode } from '../utils/inviteCode';
 import { decodePolyline, computeCumulativeDist } from '../engines/polylineDecoder';
+import { runLeaderboardEngine } from '../engines/leaderboardEngine';
 import { rideStore } from '../store/rideStore';
 import { getIO } from '../sockets/server';
 import { buildStatePayload } from '../sockets/broadcaster';
@@ -850,6 +851,84 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       await updateParticipantStatus(rideId, userId, 'JOINED');
     } else {
       await addParticipant(rideId, userId);
+    }
+
+    return { ok: true };
+  });
+
+  // POST /rides/:rideId/leave — a rider removes THEMSELVES from the ride
+  //
+  // Deliberately mirrors `DELETE /rides/:rideId/participants/:targetUserId` (the leader's kick)
+  // rather than the older `ride:leave` socket event: same guards, same in-memory cleanup, same
+  // broadcast, and an acknowledged HTTP result so the client knows whether it actually left
+  // before it tears its own session down.
+  fastify.post('/rides/:rideId/leave', {
+    schema: {
+      security,
+      summary: 'Leave a ride (any participant except the leader)',
+      tags: ['Rides'],
+      params: {
+        type: 'object',
+        properties: { rideId: { type: 'string', format: 'uuid' } },
+      },
+      response: {
+        200: { type: 'object', properties: { ok: { type: 'boolean' } } },
+        400: errorSchema('LEADER_CANNOT_LEAVE'),
+        404: errorSchema('RIDE_NOT_FOUND | PARTICIPANT_NOT_FOUND'),
+        409: errorSchema('RIDE_ENDED'),
+      },
+    },
+  }, async (request: FastifyRequest, reply) => {
+    const { userId } = request.user;
+    const { rideId } = request.params as { rideId: string };
+
+    const ride = await getRideById(rideId);
+    if (!ride) return reply.code(404).send({ error: 'RIDE_NOT_FOUND' });
+    if (ride.status === 'COMPLETED') return reply.code(409).send({ error: 'RIDE_ENDED' });
+    // The leader leaving would orphan the ride — nobody could start, end or edit it. They
+    // delete it (DELETE /rides/:rideId) or end it instead.
+    if (ride.leader_id === userId) {
+      return reply.code(400).send({ error: 'LEADER_CANNOT_LEAVE' });
+    }
+
+    const me = await getParticipant(rideId, userId);
+    if (!me || me.status === 'LEFT') {
+      return reply.code(404).send({ error: 'PARTICIPANT_NOT_FOUND' });
+    }
+
+    await updateParticipantStatus(rideId, userId, 'LEFT');
+
+    // DELETE from the live state, don't just flag it. `buildStatePayload` maps every entry in
+    // `state.participants` with no status filter, so a participant merely marked LEFT keeps
+    // broadcasting their last position to everyone else — their map pin, their rider marker and
+    // their off-screen edge indicator would all survive the leave. This is exactly what the
+    // socket `ride:leave` handler used to get wrong.
+    const state = rideStore.get(rideId);
+    if (state) {
+      state.participants.delete(userId);
+      // Recompute now so the payload below carries a leaderboard without them, rather than
+      // shipping a stale one that the next location tick happens to correct.
+      runLeaderboardEngine(state);
+    }
+
+    // Roster event first: this is what every client already listens to for live roster,
+    // ready-tally and `canStart` updates.
+    getIO().to(`ride:${rideId}`).emit('ride:participant_left', { userId });
+
+    // Then the live snapshot, so riders already in navigation drop the pin, the leaderboard row
+    // and the live count on the next frame instead of waiting for the next broadcast tick.
+    if (state) {
+      getIO().to(`ride:${rideId}`).emit('ride:state_update', buildStatePayload(state));
+    }
+
+    // Kick their socket(s) out of the room so they receive no further updates for this ride.
+    try {
+      const sockets = await getIO().in(`ride:${rideId}`).fetchSockets();
+      for (const s of sockets) {
+        if (s.data.userId === userId) s.leave(`ride:${rideId}`);
+      }
+    } catch {
+      // Socket.IO not initialized (e.g. tests) — DB update + broadcast still applied.
     }
 
     return { ok: true };

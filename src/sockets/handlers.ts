@@ -182,19 +182,34 @@ export function setupSocketHandlers(io: Server): void {
       }
     });
 
-    // ride:leave
+    // ride:leave — legacy fire-and-forget path. `POST /rides/:rideId/leave` is the acknowledged
+    // one clients should use; this stays for older builds and is kept behaviourally identical to
+    // it so the two can't drift.
     socket.on('ride:leave', async ({ rideId }: { rideId: string }) => {
+      // A leader leaving would orphan the ride — nobody could start, end or edit it. Silently
+      // ignoring is right for a fire-and-forget event with no ack to report a refusal on; the
+      // REST route returns LEADER_CANNOT_LEAVE for the same case.
+      const ride = await getRideById(rideId).catch(() => null);
+      if (ride && ride.leader_id === userId) return;
+
       socket.leave(`ride:${rideId}`);
 
+      // DELETE, not `status = 'LEFT'`. `buildStatePayload` maps every entry in
+      // `state.participants` with no status filter, so a participant merely flagged kept
+      // broadcasting their last position to everyone else — map pin, rider marker and
+      // off-screen edge indicator all survived the leave.
       const state = rideStore.get(rideId);
       if (state) {
-        const p = state.participants.get(userId);
-        if (p) p.status = 'LEFT';
+        state.participants.delete(userId);
+        runLeaderboardEngine(state);
       }
 
       await updateParticipantStatus(rideId, userId, 'LEFT').catch(() => {});
 
       io.to(`ride:${rideId}`).emit('ride:participant_left', { userId });
+      if (state) {
+        io.to(`ride:${rideId}`).emit('ride:state_update', buildStatePayload(state));
+      }
     });
 
     // ride:heartbeat — periodic liveness ping from a foregrounded client. Keeps the user in
