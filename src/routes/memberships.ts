@@ -7,18 +7,34 @@ import {
   getPremiumPlan,
   upsertMembership,
   MembershipPlan,
+  MembershipProvider,
 } from '../db/membershipRepo';
+import {
+  verifyPlayPurchase,
+  acknowledgePlayPurchase,
+  isPlayConfigured,
+  PlayNotConfiguredError,
+  PlayPurchaseInvalidError,
+} from '../services/playBillingService';
 
 const security = [{ bearerAuth: [] }];
 
-// Valid ConvoTrack IAP product IDs — reject any signed transaction for a different app's product.
+// Valid ConvoTrack IAP product IDs — reject any verified purchase for a different app's product.
 // Legacy `convoy.*` IDs are kept so purchases made before the Convoy → ConvoTrack rename still activate.
-const VALID_PRODUCT_IDS = new Set([
-  'danglingmind.convotrack.membership.monthly',
-  'danglingmind.convotrack.membership.yearly',
-  'danglingmind.convoy.membership.monthly',
-  'danglingmind.convoy.membership.yearly',
-]);
+// The two stores have separate namespaces and are checked separately: an Apple product id presented
+// on the Play path is just as wrong as an unrecognised one.
+const VALID_PRODUCT_IDS: Record<MembershipProvider, Set<string>> = {
+  apple: new Set([
+    'danglingmind.convotrack.membership.monthly',
+    'danglingmind.convotrack.membership.yearly',
+    'danglingmind.convoy.membership.monthly',
+    'danglingmind.convoy.membership.yearly',
+  ]),
+  google: new Set([
+    'convotrack_pro_monthly',
+    'convotrack_pro_yearly',
+  ]),
+};
 
 // Apple's public JWKS endpoint — keys are cached internally by jose with TTL.
 const appleJWKS = createRemoteJWKSet(
@@ -113,17 +129,24 @@ export async function membershipRoutes(fastify: FastifyInstance): Promise<void> 
     };
   });
 
-  // POST /memberships/activate — verify Apple IAP signed transaction and upgrade user
+  // POST /memberships/activate — verify a store purchase and upgrade the user.
+  //
+  // Two shapes, one response. iOS posts `{ signedTransaction }` and is verified
+  // offline against Apple's JWKS; Android posts `{ provider: 'google',
+  // purchaseToken }` and is verified by asking the Play Developer API. `provider`
+  // is optional and defaults to `apple` so the existing iOS build — which has no
+  // idea this field exists — keeps working byte-for-byte.
   fastify.post('/memberships/activate', {
     schema: {
       security,
-      summary: 'Activate premium membership from Apple IAP signed transaction',
+      summary: 'Activate premium membership from an Apple or Google Play purchase',
       tags: ['Memberships'],
       body: {
         type: 'object',
-        required: ['signedTransaction'],
         properties: {
+          provider:          { type: 'string', enum: ['apple', 'google'] },
           signedTransaction: { type: 'string' },
+          purchaseToken:     { type: 'string' },
         },
       },
       response: {
@@ -146,50 +169,132 @@ export async function membershipRoutes(fastify: FastifyInstance): Promise<void> 
           },
         },
         400: { type: 'object', properties: { error: { type: 'string' } } },
+        409: { type: 'object', properties: { error: { type: 'string' } } },
+        502: { type: 'object', properties: { error: { type: 'string' } } },
       },
     },
   }, async (request: FastifyRequest, reply) => {
     const { userId } = request.user;
-    const { signedTransaction } = request.body as { signedTransaction: string };
+    const body = request.body as {
+      provider?: MembershipProvider;
+      signedTransaction?: string;
+      purchaseToken?: string;
+    };
 
-    let payload: AppleJWSPayload;
-    try {
-      payload = await verifyAppleJWS(signedTransaction);
-    } catch {
-      return reply.code(400).send({ error: 'INVALID_TRANSACTION' });
+    // Infer the provider from the payload when it is absent, so the existing iOS
+    // request stays valid without a client change.
+    const provider: MembershipProvider =
+      body.provider ?? (body.purchaseToken ? 'google' : 'apple');
+
+    let productId:   string;
+    let expiresDate: Date;
+    let purchaseAt:  Date;
+    let environment: string;
+    let transactionId: string;
+
+    if (provider === 'apple') {
+      if (!body.signedTransaction) {
+        return reply.code(400).send({ error: 'MISSING_REQUIRED_FIELDS' });
+      }
+
+      let payload: AppleJWSPayload;
+      try {
+        payload = await verifyAppleJWS(body.signedTransaction);
+      } catch {
+        return reply.code(400).send({ error: 'INVALID_TRANSACTION' });
+      }
+
+      if (!payload.originalTransactionId || !payload.expiresDate) {
+        return reply.code(400).send({ error: 'INVALID_TRANSACTION_PAYLOAD' });
+      }
+
+      productId     = payload.productId;
+      transactionId = payload.originalTransactionId;
+      expiresDate   = new Date(payload.expiresDate);
+      purchaseAt    = new Date(payload.purchaseDate ?? Date.now());
+      environment   = payload.environment ?? 'Production';
+
+    } else {
+      if (!body.purchaseToken) {
+        return reply.code(400).send({ error: 'MISSING_REQUIRED_FIELDS' });
+      }
+      if (!isPlayConfigured()) {
+        // Distinct from a bad purchase: the rider did nothing wrong and retrying
+        // will not help until the service account is configured.
+        request.log.error('Play activation attempted but GOOGLE_PLAY_SERVICE_ACCOUNT_JSON is unset');
+        return reply.code(502).send({ error: 'PLAY_VERIFICATION_UNAVAILABLE' });
+      }
+
+      let purchase;
+      try {
+        purchase = await verifyPlayPurchase(body.purchaseToken);
+      } catch (err) {
+        if (err instanceof PlayPurchaseInvalidError) {
+          return reply.code(400).send({ error: err.message });
+        }
+        if (err instanceof PlayNotConfiguredError) {
+          return reply.code(502).send({ error: 'PLAY_VERIFICATION_UNAVAILABLE' });
+        }
+        // Google was unreachable or answered 5xx. Not the rider's fault, and the
+        // client should retry rather than treat the purchase as dead.
+        request.log.error({ err }, 'Play purchase verification failed');
+        return reply.code(502).send({ error: 'PLAY_VERIFICATION_UNAVAILABLE' });
+      }
+
+      productId   = purchase.productId;
+      expiresDate = purchase.expiresAt;
+      purchaseAt  = purchase.startsAt;
+      environment = purchase.environment;
+      // Play reissues the token on upgrade/downgrade and points the new one at
+      // the old via linkedPurchaseToken. Keying on the *original* token keeps a
+      // plan change updating one row instead of stacking a second entitlement.
+      transactionId = purchase.linkedPurchaseToken ?? body.purchaseToken;
     }
 
-    if (!payload.originalTransactionId || !payload.expiresDate) {
-      return reply.code(400).send({ error: 'INVALID_TRANSACTION_PAYLOAD' });
-    }
-
-    if (!VALID_PRODUCT_IDS.has(payload.productId)) {
+    if (!VALID_PRODUCT_IDS[provider].has(productId)) {
       return reply.code(400).send({ error: 'INVALID_PRODUCT_ID' });
     }
 
-    if (process.env.NODE_ENV === 'production' && payload.environment === 'Sandbox') {
+    if (process.env.NODE_ENV === 'production' && environment === 'Sandbox') {
       return reply.code(400).send({ error: 'SANDBOX_TRANSACTION_IN_PRODUCTION' });
     }
 
-    const endsAt = new Date(payload.expiresDate);
-    if (endsAt <= new Date()) {
+    if (expiresDate <= new Date()) {
       return reply.code(400).send({ error: 'TRANSACTION_EXPIRED' });
     }
 
     const premiumPlan = await getPremiumPlan();
-    const startsAt    = new Date(payload.purchaseDate ?? Date.now());
 
-    await upsertMembership({
+    const owner = await upsertMembership({
       userId,
       planId: premiumPlan.id,
-      startsAt,
-      endsAt,
-      appleOriginalTransactionId: payload.originalTransactionId,
-      // Use productId from the verified JWS payload, not the client-supplied body
-      appleProductId: payload.productId,
-      appleEnvironment: payload.environment ?? 'Production',
+      startsAt: purchaseAt,
+      endsAt: expiresDate,
+      provider,
+      providerTransactionId: transactionId,
+      // Use the product id from the verified purchase, not the client-supplied body
+      providerProductId: productId,
+      providerEnvironment: environment,
     });
 
-    return { ok: true, plan: planResponse(premiumPlan, endsAt) };
+    // The purchase is already bound to a different account. Reporting premium
+    // here would hand the caller a plan that `GET /users/me` will not agree with,
+    // so say so instead of returning a 200 the server cannot honour.
+    if (owner.userId !== userId) {
+      return reply.code(409).send({ error: 'PURCHASE_ALREADY_CLAIMED' });
+    }
+
+    if (provider === 'google' && body.purchaseToken) {
+      // After the entitlement is durable, never before — an acknowledgement that
+      // outlives a failed write would leave a paid rider on the free plan with no
+      // refund window left. Best-effort: Play retries for three days.
+      try {
+        await acknowledgePlayPurchase(body.purchaseToken, productId);
+      } catch (err) {
+        request.log.warn({ err }, 'Play purchase acknowledgement failed');
+      }
+    }
+
+    return { ok: true, plan: planResponse(premiumPlan, expiresDate) };
   });
 }

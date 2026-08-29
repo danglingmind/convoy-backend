@@ -1943,7 +1943,7 @@
     },
     "/memberships/activate": {
       "post": {
-        "summary": "Activate premium membership from Apple IAP signed transaction",
+        "summary": "Activate premium membership from an Apple or Google Play purchase",
         "tags": [
           "Memberships"
         ],
@@ -1952,18 +1952,24 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": [
-                  "signedTransaction"
-                ],
                 "properties": {
+                  "provider": {
+                    "type": "string",
+                    "enum": [
+                      "apple",
+                      "google"
+                    ]
+                  },
                   "signedTransaction": {
+                    "type": "string"
+                  },
+                  "purchaseToken": {
                     "type": "string"
                   }
                 }
               }
             }
-          },
-          "required": true
+          }
         },
         "security": [
           {
@@ -2015,6 +2021,36 @@
             }
           },
           "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
             "description": "Default Response",
             "content": {
               "application/json": {
