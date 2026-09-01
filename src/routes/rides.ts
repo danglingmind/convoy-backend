@@ -11,7 +11,12 @@ import {
   deleteRide,
   WaypointInput,
 } from '../db/rideRepo';
-import { updateUserProfile, updateExtendedProfile } from '../db/userRepo';
+import {
+  updateUserProfile,
+  updateExtendedProfile,
+  getAccountRideIds,
+  deleteUserAccount,
+} from '../db/userRepo';
 import { getNearbyRides } from '../db/discoveryRepo';
 import {
   addParticipant,
@@ -24,6 +29,7 @@ import {
 import { getSummaryWithParticipants } from '../db/summaryRepo';
 import { canUserParticipate, getUserPlanOrFree } from '../services/quotaService';
 import { generateRideSummary, generateFallbackSummary } from '../services/summaryService';
+import { deleteClerkUser } from '../services/clerkAdmin';
 import { generateInviteCode } from '../utils/inviteCode';
 import { decodePolyline, computeCumulativeDist } from '../engines/polylineDecoder';
 import { runLeaderboardEngine } from '../engines/leaderboardEngine';
@@ -51,6 +57,53 @@ const errorSchema = (description: string) => ({
   type: 'object',
   properties: { error: { type: 'string', description } },
 });
+
+/**
+ * Tell everyone in a deleted account's rides that those rides are gone, and drop the live state —
+ * the same teardown `DELETE /rides/:rideId` performs, applied to each ride the account led.
+ */
+async function announceRidesDeleted(rideIds: string[], deletedBy: string): Promise<void> {
+  for (const rideId of rideIds) {
+    rideStore.delete(rideId);
+    try {
+      getIO().to(`ride:${rideId}`).emit('ride:deleted', { rideId, deletedBy });
+      const sockets = await getIO().in(`ride:${rideId}`).fetchSockets();
+      for (const s of sockets) s.leave(`ride:${rideId}`);
+    } catch {
+      // Socket.IO not initialized (e.g. tests) — the DB delete still stands.
+    }
+  }
+}
+
+/**
+ * Remove a departed rider from the rides that outlive them, exactly as `POST /rides/:id/leave`
+ * does — including DELETING them from the live state rather than flagging them. `buildStatePayload`
+ * maps every entry in `state.participants` with no status filter, so an entry left behind keeps
+ * broadcasting a dead account's last position as a map pin and a leaderboard row.
+ */
+async function announceParticipantLeft(rideIds: string[], userId: string): Promise<void> {
+  for (const rideId of rideIds) {
+    const state = rideStore.get(rideId);
+    if (state) {
+      state.participants.delete(userId);
+      // Recompute now, so the snapshot below carries a leaderboard without them instead of a
+      // stale one that the next location tick happens to correct.
+      runLeaderboardEngine(state);
+    }
+    try {
+      getIO().to(`ride:${rideId}`).emit('ride:participant_left', { userId });
+      if (state) {
+        getIO().to(`ride:${rideId}`).emit('ride:state_update', buildStatePayload(state));
+      }
+      const sockets = await getIO().in(`ride:${rideId}`).fetchSockets();
+      for (const s of sockets) {
+        if (s.data.userId === userId) s.leave(`ride:${rideId}`);
+      }
+    } catch {
+      // Socket.IO not initialized (e.g. tests).
+    }
+  }
+}
 
 export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
   // PATCH /users/me — sync display name + avatar + extended profile fields
@@ -107,6 +160,66 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.code(409).send({ error: 'USERNAME_TAKEN' });
     }
 
+    return { ok: true };
+  });
+
+  // DELETE /users/me — erase the account and everything belonging to it
+  //
+  // Required by Google Play of any app that lets people create an account, and what it requires is
+  // deletion, not deactivation: nothing here freezes, anonymises or flags. This is consequently
+  // the one endpoint that will delete a COMPLETED ride, which `DELETE /rides/:rideId` refuses —
+  // keeping a historical record cannot outrank the right to erasure.
+  fastify.delete('/users/me', {
+    schema: {
+      security,
+      summary: 'Delete the current account and all of its data',
+      tags: ['Users'],
+      response: {
+        200: { type: 'object', properties: { ok: { type: 'boolean' } } },
+        500: errorSchema('ACCOUNT_DELETE_FAILED'),
+      },
+    },
+  }, async (request: FastifyRequest, reply) => {
+    const { userId } = request.user;
+
+    // Read the ride ids while there is still something to read them from.
+    const { led, joined } = await getAccountRideIds(userId);
+
+    let counts;
+    try {
+      counts = await deleteUserAccount(userId);
+    } catch (err) {
+      // The whole thing is one transaction, so this leaves the account exactly as it was.
+      request.log.error({ err, userId }, 'account deletion rolled back; nothing was deleted');
+      return reply.code(500).send({ error: 'ACCOUNT_DELETE_FAILED' });
+    }
+
+    // Broadcast AFTER the rows are gone, which is the opposite of `DELETE /rides/:rideId`.
+    //
+    // That route announces first so the room empties while the ride still exists, and for a single
+    // ride deleted by a single statement that is right. This tears down an account across seven
+    // tables in one transaction: announcing first would mean a rollback leaves every rider in
+    // every one of those rides told that rides which still exist have vanished. Announcing after
+    // can at worst race a client into a 404 on a ride that genuinely is gone — and the clients
+    // already read RIDE_NOT_FOUND as "leave this ride".
+    await announceRidesDeleted(led, userId);
+    await announceParticipantLeft(joined, userId);
+
+    // Last, and only once the data is actually gone. See `deleteClerkUser` for why this cannot go
+    // first. A failure is reported rather than swallowed: the rider retries, `clerkAuth` recreates
+    // an empty row, and the second pass finishes the job — whereas reporting success would leave a
+    // working sign-in attached to nothing.
+    try {
+      await deleteClerkUser(userId);
+    } catch (err) {
+      request.log.error(
+        { err, userId },
+        'data deleted but Clerk identity remains; a retry will finish it'
+      );
+      return reply.code(500).send({ error: 'ACCOUNT_DELETE_FAILED' });
+    }
+
+    request.log.info({ userId, ...counts }, 'account deleted');
     return { ok: true };
   });
 

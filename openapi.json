@@ -146,6 +146,50 @@
           }
         }
       },
+      "delete": {
+        "summary": "Delete the current account and all of its data",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "ACCOUNT_DELETE_FAILED"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
       "get": {
         "summary": "Get current user profile and membership plan",
         "tags": [
