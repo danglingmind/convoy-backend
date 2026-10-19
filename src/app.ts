@@ -5,6 +5,7 @@ import { clerkAuth } from './middleware/auth';
 import { healthRoutes } from './routes/health';
 import { deeplinkRoutes } from './routes/deeplink';
 import { ridesRoutes } from './routes/rides';
+import { eventsRoutes } from './routes/events';
 import { membershipRoutes } from './routes/memberships';
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -52,6 +53,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     protected_.addHook('preHandler', clerkAuth);
     await protected_.register(ridesRoutes);
     await protected_.register(membershipRoutes);
+    await protected_.register(eventsRoutes);
   });
 
   // Global error handler

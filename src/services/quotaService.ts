@@ -1,6 +1,12 @@
 import { pool } from '../db/pool';
 import { getUserPlan, getFreePlan, MembershipPlan } from '../db/membershipRepo';
-import { getTrialEndsAt, startTrialIfUnset } from '../db/userRepo';
+import {
+  getTrialEndsAt,
+  startTrialIfUnset,
+  startTrialAtIfUnset,
+  getDeviceTrialEndsAt,
+  recordDeviceTrial,
+} from '../db/userRepo';
 
 /** Length of the app-level free trial a new (or, at rollout, existing) rider gets. */
 export const TRIAL_DURATION_DAYS = 3;
@@ -40,14 +46,59 @@ export function isPremiumPlan(plan: MembershipPlan): boolean {
   return plan.code !== 'free';
 }
 
+/** Route-schema fragment documenting the optional device header (one trial per device). */
+export const deviceIdHeaderSchema = {
+  type: 'object',
+  properties: {
+    'x-device-id': {
+      type: 'string',
+      description: 'Opaque app device id (16–128 chars, [A-Za-z0-9-]). Ties the free trial to the device.',
+    },
+  },
+} as const;
+
+/**
+ * The app's opaque device id from the `X-Device-Id` header, or null when absent or malformed
+ * (old app builds send none; the trial then falls back to per-account, as before).
+ */
+export function readDeviceId(headers: Record<string, unknown>): string | null {
+  const raw = headers['x-device-id'];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof value !== 'string') return null;
+  return /^[A-Za-z0-9-]{16,128}$/.test(value) ? value : null;
+}
+
+/**
+ * Start a free rider's trial, one per device: a device that already had a trial (under any
+ * account) hands its end date to the new account rather than granting 3 fresh days.
+ */
+async function startTrial(userId: string, deviceId: string | null): Promise<Date | null> {
+  const existing = await getTrialEndsAt(userId);
+  if (existing) {
+    // Already running: just make sure this device remembers it for any later account.
+    if (deviceId) await recordDeviceTrial(deviceId, userId, existing);
+    return existing;
+  }
+  const deviceEnd = deviceId ? await getDeviceTrialEndsAt(deviceId) : null;
+  const endsAt = deviceEnd
+    ? await startTrialAtIfUnset(userId, deviceEnd)
+    : await startTrialIfUnset(userId, TRIAL_DURATION_DAYS);
+  if (deviceId && endsAt) await recordDeviceTrial(deviceId, userId, endsAt);
+  return endsAt;
+}
+
 /**
  * The rider's trial. While enforcement is on, a free rider's trial starts on first sight; Pro riders
  * never start one (it would only be a misleading countdown if they later lapse).
  */
-export async function getTrialStatus(userId: string, plan: MembershipPlan): Promise<TrialStatus> {
+export async function getTrialStatus(
+  userId: string,
+  plan: MembershipPlan,
+  deviceId: string | null = null,
+): Promise<TrialStatus> {
   const enforced = isTrialEnforced();
   const endsAt = enforced && !isPremiumPlan(plan)
-    ? await startTrialIfUnset(userId, TRIAL_DURATION_DAYS)
+    ? await startTrial(userId, deviceId)
     : await getTrialEndsAt(userId);
   return {
     endsAt,
@@ -60,9 +111,9 @@ export async function getTrialStatus(userId: string, plan: MembershipPlan): Prom
  * Whether the rider may create or join a ride. A free rider needs an unexpired trial (when
  * enforced) AND monthly quota left; the trial is checked first because it is the primary limit.
  */
-export async function canUserParticipate(userId: string): Promise<QuotaResult> {
+export async function canUserParticipate(userId: string, deviceId: string | null = null): Promise<QuotaResult> {
   const plan = await getUserPlanOrFree(userId);
-  const trial = await getTrialStatus(userId, plan);
+  const trial = await getTrialStatus(userId, plan, deviceId);
   const limit = plan.monthly_ride_participation_limit;
   const trialExpired = trial.enforced && !isPremiumPlan(plan) && !trial.isActive;
 

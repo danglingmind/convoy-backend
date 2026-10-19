@@ -14,7 +14,7 @@ import {
   PlayNotConfiguredError,
   PlayPurchaseInvalidError,
 } from '../services/playBillingService';
-import { canUserParticipate } from '../services/quotaService';
+import { canUserParticipate, readDeviceId, deviceIdHeaderSchema } from '../services/quotaService';
 
 const security = [{ bearerAuth: [] }];
 
@@ -76,6 +76,7 @@ export async function membershipRoutes(fastify: FastifyInstance): Promise<void> 
     schema: {
       security,
       summary: 'Get current user profile and membership plan',
+      headers: deviceIdHeaderSchema,
       tags: ['Users'],
       response: {
         200: {
@@ -128,7 +129,7 @@ export async function membershipRoutes(fastify: FastifyInstance): Promise<void> 
     if (!user) return reply.code(404).send({ error: 'USER_NOT_FOUND' });
     // Same check create/join run, so the app's trial/usage display can't disagree with the gate.
     // For a free rider this is also what starts the trial once enforcement is on.
-    const quota = await canUserParticipate(userId);
+    const quota = await canUserParticipate(userId, readDeviceId(request.headers));
     const plan = quota.plan;
     return {
       userId:              user.id,

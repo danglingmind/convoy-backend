@@ -27,7 +27,7 @@ import {
   updateParticipantStatus,
 } from '../db/participantRepo';
 import { getSummaryWithParticipants } from '../db/summaryRepo';
-import { canUserParticipate, getUserPlanOrFree, QuotaResult } from '../services/quotaService';
+import { canUserParticipate, getUserPlanOrFree, QuotaResult, readDeviceId, deviceIdHeaderSchema } from '../services/quotaService';
 import { generateRideSummary, generateFallbackSummary } from '../services/summaryService';
 import { deleteClerkUser } from '../services/clerkAdmin';
 import { generateInviteCode } from '../utils/inviteCode';
@@ -325,6 +325,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
     schema: {
       security,
       summary: 'Create a new ride',
+      headers: deviceIdHeaderSchema,
       tags: ['Rides'],
       body: {
         type: 'object',
@@ -391,7 +392,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     // Free trial, then monthly quota
-    const quota = await canUserParticipate(userId);
+    const quota = await canUserParticipate(userId, readDeviceId(request.headers));
     if (!quota.allowed) {
       return reply.code(403).send(participationDenied(quota));
     }
@@ -933,6 +934,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
     schema: {
       security,
       summary: 'Join a ride',
+      headers: deviceIdHeaderSchema,
       tags: ['Rides'],
       params: {
         type: 'object',
@@ -967,7 +969,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       });
     }
 
-    const quota = await canUserParticipate(userId);
+    const quota = await canUserParticipate(userId, readDeviceId(request.headers));
     if (!quota.allowed) {
       return reply.code(403).send(participationDenied(quota));
     }

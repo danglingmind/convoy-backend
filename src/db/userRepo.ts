@@ -226,6 +226,40 @@ export async function getTrialEndsAt(id: string): Promise<Date | null> {
   return rows[0]?.trial_ends_at ?? null;
 }
 
+/** The trial end already recorded for this device, if any account on it has had a trial. */
+export async function getDeviceTrialEndsAt(deviceId: string): Promise<Date | null> {
+  const { rows } = await pool.query<{ trial_ends_at: Date }>(
+    `SELECT trial_ends_at FROM trial_devices WHERE device_id = $1`,
+    [deviceId]
+  );
+  return rows[0]?.trial_ends_at ?? null;
+}
+
+/**
+ * Remember that this device has had a trial ending at `endsAt`. First writer wins: a later
+ * account on the device never moves the device's trial forward.
+ */
+export async function recordDeviceTrial(deviceId: string, userId: string, endsAt: Date): Promise<void> {
+  await pool.query(
+    `INSERT INTO trial_devices (device_id, first_user_id, trial_ends_at)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (device_id) DO NOTHING`,
+    [deviceId, userId, endsAt]
+  );
+}
+
+/** Start the user's trial with an explicit end (inherited from the device) if it hasn't started. */
+export async function startTrialAtIfUnset(id: string, endsAt: Date): Promise<Date | null> {
+  const { rows } = await pool.query<{ trial_ends_at: Date | null }>(
+    `UPDATE users
+        SET trial_ends_at = COALESCE(trial_ends_at, $2)
+      WHERE id = $1
+      RETURNING trial_ends_at`,
+    [id, endsAt]
+  );
+  return rows[0]?.trial_ends_at ?? null;
+}
+
 /**
  * Start the free trial if it hasn't started, and return its end either way. The `IS NULL` guard
  * makes concurrent first requests agree on one end date instead of each pushing it forward.
