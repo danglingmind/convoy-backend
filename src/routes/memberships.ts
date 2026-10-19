@@ -118,6 +118,15 @@ export async function membershipRoutes(fastify: FastifyInstance): Promise<void> 
                 monthlyLimit:       { type: 'integer', nullable: true, description: 'null = unlimited' },
               },
             },
+            proPlan: {
+              type: 'object',
+              description: 'What Pro offers, so upsell copy quotes the real limits instead of constants',
+              properties: {
+                maxRidersPerRide: { type: 'integer' },
+                monthlyLimit:     { type: 'integer', nullable: true, description: 'null = unlimited' },
+                rideHistoryDays:  { type: 'integer' },
+              },
+            },
           },
         },
         404: { type: 'object', properties: { error: { type: 'string' } } },
@@ -129,7 +138,10 @@ export async function membershipRoutes(fastify: FastifyInstance): Promise<void> 
     if (!user) return reply.code(404).send({ error: 'USER_NOT_FOUND' });
     // Same check create/join run, so the app's trial/usage display can't disagree with the gate.
     // For a free rider this is also what starts the trial once enforcement is on.
-    const quota = await canUserParticipate(userId, readDeviceId(request.headers));
+    const [quota, proPlan] = await Promise.all([
+      canUserParticipate(userId, readDeviceId(request.headers)),
+      getPremiumPlan(),
+    ]);
     const plan = quota.plan;
     return {
       userId:              user.id,
@@ -150,6 +162,11 @@ export async function membershipRoutes(fastify: FastifyInstance): Promise<void> 
       usage: {
         ridesUsedThisMonth: quota.used,
         monthlyLimit:       quota.limit,
+      },
+      proPlan: {
+        maxRidersPerRide: proPlan.max_riders_per_ride,
+        monthlyLimit:     proPlan.monthly_ride_participation_limit,
+        rideHistoryDays:  proPlan.ride_history_days,
       },
     };
   });

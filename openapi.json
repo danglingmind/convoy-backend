@@ -305,6 +305,23 @@
                           "description": "null = unlimited"
                         }
                       }
+                    },
+                    "proPlan": {
+                      "type": "object",
+                      "description": "What Pro offers, so upsell copy quotes the real limits instead of constants",
+                      "properties": {
+                        "maxRidersPerRide": {
+                          "type": "integer"
+                        },
+                        "monthlyLimit": {
+                          "type": "integer",
+                          "nullable": true,
+                          "description": "null = unlimited"
+                        },
+                        "rideHistoryDays": {
+                          "type": "integer"
+                        }
+                      }
                     }
                   }
                 }
