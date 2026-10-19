@@ -27,7 +27,7 @@ import {
   updateParticipantStatus,
 } from '../db/participantRepo';
 import { getSummaryWithParticipants } from '../db/summaryRepo';
-import { canUserParticipate, getUserPlanOrFree } from '../services/quotaService';
+import { canUserParticipate, getUserPlanOrFree, QuotaResult } from '../services/quotaService';
 import { generateRideSummary, generateFallbackSummary } from '../services/summaryService';
 import { deleteClerkUser } from '../services/clerkAdmin';
 import { generateInviteCode } from '../utils/inviteCode';
@@ -57,6 +57,27 @@ const errorSchema = (description: string) => ({
   type: 'object',
   properties: { error: { type: 'string', description } },
 });
+
+// Declares the extra fields so Fastify's response serializer doesn't strip them.
+const participationDeniedSchema = {
+  type: 'object',
+  properties: {
+    error:       { type: 'string', description: 'TRIAL_EXPIRED | QUOTA_EXCEEDED' },
+    used:        { type: 'integer', description: 'Rides counted this month' },
+    limit:       { type: 'integer', nullable: true, description: 'Monthly ride limit; null = unlimited' },
+    trialEndsAt: { type: 'string', format: 'date-time', nullable: true },
+  },
+} as const;
+
+/** 403 body for a create/join the rider's plan doesn't allow. */
+function participationDenied(quota: QuotaResult) {
+  return {
+    error: quota.reason,
+    used: quota.used,
+    limit: quota.limit,
+    trialEndsAt: quota.trial.endsAt?.toISOString() ?? null,
+  };
+}
 
 /**
  * Tell everyone in a deleted account's rides that those rides are gone, and drop the live state —
@@ -331,7 +352,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
         },
         400: errorSchema('MISSING_REQUIRED_FIELDS | INVALID_WAYPOINTS'),
         401: errorSchema('UNAUTHORIZED | INVALID_TOKEN'),
-        403: errorSchema('QUOTA_EXCEEDED'),
+        403: participationDeniedSchema,
       },
     },
   }, async (request: FastifyRequest, reply) => {
@@ -369,14 +390,10 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: 'INVALID_WAYPOINTS' });
     }
 
-    // Check monthly quota
+    // Free trial, then monthly quota
     const quota = await canUserParticipate(userId);
     if (!quota.allowed) {
-      return reply.code(403).send({
-        error: 'QUOTA_EXCEEDED',
-        used: quota.used,
-        limit: quota.limit,
-      });
+      return reply.code(403).send(participationDenied(quota));
     }
 
     const plan = quota.plan;
@@ -923,7 +940,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       },
       response: {
         200: { type: 'object', properties: { ok: { type: 'boolean' } } },
-        403: errorSchema('QUOTA_EXCEEDED'),
+        403: participationDeniedSchema,
         404: errorSchema('RIDE_NOT_FOUND'),
         409: errorSchema('RIDE_ENDED | ALREADY_JOINED | RIDE_FULL'),
       },
@@ -952,11 +969,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
 
     const quota = await canUserParticipate(userId);
     if (!quota.allowed) {
-      return reply.code(403).send({
-        error: 'QUOTA_EXCEEDED',
-        used: quota.used,
-        limit: quota.limit,
-      });
+      return reply.code(403).send(participationDenied(quota));
     }
 
     if (existing) {

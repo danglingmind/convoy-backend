@@ -216,3 +216,27 @@ export async function deleteUserAccount(userId: string): Promise<AccountDeletion
     client.release();
   }
 }
+
+/** When this user's app-level free trial ends. null = never started (or the user doesn't exist). */
+export async function getTrialEndsAt(id: string): Promise<Date | null> {
+  const { rows } = await pool.query<{ trial_ends_at: Date | null }>(
+    `SELECT trial_ends_at FROM users WHERE id = $1`,
+    [id]
+  );
+  return rows[0]?.trial_ends_at ?? null;
+}
+
+/**
+ * Start the free trial if it hasn't started, and return its end either way. The `IS NULL` guard
+ * makes concurrent first requests agree on one end date instead of each pushing it forward.
+ */
+export async function startTrialIfUnset(id: string, durationDays: number): Promise<Date | null> {
+  const { rows } = await pool.query<{ trial_ends_at: Date | null }>(
+    `UPDATE users
+        SET trial_ends_at = COALESCE(trial_ends_at, now() + make_interval(days => $2))
+      WHERE id = $1
+      RETURNING trial_ends_at`,
+    [id, durationDays]
+  );
+  return rows[0]?.trial_ends_at ?? null;
+}

@@ -262,6 +262,38 @@
                           "type": "boolean"
                         }
                       }
+                    },
+                    "trial": {
+                      "type": "object",
+                      "description": "App-level free trial. Free riders can create/join rides only while it is active (when enforced).",
+                      "properties": {
+                        "endsAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true,
+                          "description": "null = not started"
+                        },
+                        "isActive": {
+                          "type": "boolean"
+                        },
+                        "enforced": {
+                          "type": "boolean",
+                          "description": "false = trial is informational only; rides are not blocked when it ends"
+                        }
+                      }
+                    },
+                    "usage": {
+                      "type": "object",
+                      "properties": {
+                        "ridesUsedThisMonth": {
+                          "type": "integer"
+                        },
+                        "monthlyLimit": {
+                          "type": "integer",
+                          "nullable": true,
+                          "description": "null = unlimited"
+                        }
+                      }
                     }
                   }
                 }
@@ -565,7 +597,21 @@
                   "properties": {
                     "error": {
                       "type": "string",
-                      "description": "QUOTA_EXCEEDED"
+                      "description": "TRIAL_EXPIRED | QUOTA_EXCEEDED"
+                    },
+                    "used": {
+                      "type": "integer",
+                      "description": "Rides counted this month"
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Monthly ride limit; null = unlimited"
+                    },
+                    "trialEndsAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
                     }
                   }
                 }
@@ -1368,7 +1414,21 @@
                   "properties": {
                     "error": {
                       "type": "string",
-                      "description": "QUOTA_EXCEEDED"
+                      "description": "TRIAL_EXPIRED | QUOTA_EXCEEDED"
+                    },
+                    "used": {
+                      "type": "integer",
+                      "description": "Rides counted this month"
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "nullable": true,
+                      "description": "Monthly ride limit; null = unlimited"
+                    },
+                    "trialEndsAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
                     }
                   }
                 }

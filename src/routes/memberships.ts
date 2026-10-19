@@ -2,8 +2,6 @@ import { FastifyInstance, FastifyRequest } from 'fastify';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { getUserById } from '../db/userRepo';
 import {
-  getUserPlan,
-  getFreePlan,
   getPremiumPlan,
   upsertMembership,
   MembershipPlan,
@@ -16,6 +14,7 @@ import {
   PlayNotConfiguredError,
   PlayPurchaseInvalidError,
 } from '../services/playBillingService';
+import { canUserParticipate } from '../services/quotaService';
 
 const security = [{ bearerAuth: [] }];
 
@@ -102,6 +101,22 @@ export async function membershipRoutes(fastify: FastifyInstance): Promise<void> 
                 analyticsEnabled: { type: 'boolean' },
               },
             },
+            trial: {
+              type: 'object',
+              description: 'App-level free trial. Free riders can create/join rides only while it is active (when enforced).',
+              properties: {
+                endsAt:   { type: 'string', format: 'date-time', nullable: true, description: 'null = not started' },
+                isActive: { type: 'boolean' },
+                enforced: { type: 'boolean', description: 'false = trial is informational only; rides are not blocked when it ends' },
+              },
+            },
+            usage: {
+              type: 'object',
+              properties: {
+                ridesUsedThisMonth: { type: 'integer' },
+                monthlyLimit:       { type: 'integer', nullable: true, description: 'null = unlimited' },
+              },
+            },
           },
         },
         404: { type: 'object', properties: { error: { type: 'string' } } },
@@ -109,12 +124,12 @@ export async function membershipRoutes(fastify: FastifyInstance): Promise<void> 
     },
   }, async (request: FastifyRequest, reply) => {
     const { userId } = request.user;
-    const [user, activePlan] = await Promise.all([
-      getUserById(userId),
-      getUserPlan(userId),
-    ]);
+    const user = await getUserById(userId);
     if (!user) return reply.code(404).send({ error: 'USER_NOT_FOUND' });
-    const plan = activePlan ?? await getFreePlan();
+    // Same check create/join run, so the app's trial/usage display can't disagree with the gate.
+    // For a free rider this is also what starts the trial once enforcement is on.
+    const quota = await canUserParticipate(userId);
+    const plan = quota.plan;
     return {
       userId:              user.id,
       name:                user.name,
@@ -126,6 +141,15 @@ export async function membershipRoutes(fastify: FastifyInstance): Promise<void> 
       emailContactVisible: user.email_contact_visible,
       notifyNearbyRides:   user.notify_nearby_rides,
       plan:                planResponse(plan),
+      trial: {
+        endsAt:   quota.trial.endsAt?.toISOString() ?? null,
+        isActive: quota.trial.isActive,
+        enforced: quota.trial.enforced,
+      },
+      usage: {
+        ridesUsedThisMonth: quota.used,
+        monthlyLimit:       quota.limit,
+      },
     };
   });
 
