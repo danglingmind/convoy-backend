@@ -1,5 +1,5 @@
 import { Server } from 'socket.io';
-import { ActiveRideState } from '../types';
+import { ActiveRideState, OpenEmergency, OpenRegroup } from '../types';
 
 interface BroadcastSlot {
   lastAt: number;
@@ -25,26 +25,12 @@ export function buildStatePayload(state: ActiveRideState) {
       signalStrength: p.signalStrength,
     })),
     leaderboard: state.leaderboard,
-    openRegroup: state.openRegroup
-      ? {
-          regroupId: state.openRegroup.regroupId,
-          type: state.openRegroup.type,
-          lat: state.openRegroup.lat,
-          lng: state.openRegroup.lng,
-          createdBy: state.openRegroup.createdBy,
-          createdAt: state.openRegroup.createdAt,
-        }
-      : null,
-    openEmergency: state.openEmergency
-      ? {
-          emergencyId: state.openEmergency.emergencyId,
-          userId: state.openEmergency.userId,
-          lat: state.openEmergency.lat,
-          lng: state.openEmergency.lng,
-          message: state.openEmergency.message,
-          createdAt: state.openEmergency.createdAt,
-        }
-      : null,
+    // Arrays carry every open item. `openRegroup` / `openEmergency` (the most recent) stay for app
+    // versions that predate multiple open items.
+    openRegroups: Array.from(state.openRegroups.values()).map(publicRegroup),
+    openEmergencies: Array.from(state.openEmergencies.values()).map(publicEmergency),
+    openRegroup: lastOf(state.openRegroups, publicRegroup),
+    openEmergency: lastOf(state.openEmergencies, publicEmergency),
   };
 }
 
@@ -82,4 +68,32 @@ export function clearBroadcastSlot(rideId: string): void {
   const slot = slots.get(rideId);
   if (slot?.timer) clearTimeout(slot.timer);
   slots.delete(rideId);
+}
+
+function publicRegroup(r: OpenRegroup) {
+  return {
+    regroupId: r.regroupId,
+    type: r.type,
+    lat: r.lat,
+    lng: r.lng,
+    createdBy: r.createdBy,
+    createdAt: r.createdAt,
+  };
+}
+
+function publicEmergency(e: OpenEmergency) {
+  return {
+    emergencyId: e.emergencyId,
+    userId: e.userId,
+    lat: e.lat,
+    lng: e.lng,
+    message: e.message,
+    createdAt: e.createdAt,
+  };
+}
+
+function lastOf<T, R>(map: Map<string, T>, project: (v: T) => R): R | null {
+  let last: T | undefined;
+  for (const v of map.values()) last = v;
+  return last === undefined ? null : project(last);
 }

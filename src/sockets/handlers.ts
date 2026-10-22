@@ -14,7 +14,7 @@ import { getRideById, getRideWithPolyline } from '../db/rideRepo';
 import { decodePolyline, computeCumulativeDist } from '../engines/polylineDecoder';
 import { createRegroupEvent, resolveRegroupEvent } from '../db/regroupRepo';
 import { createEmergencyEvent } from '../db/emergencyRepo';
-import { RegroupType } from '../types';
+import { ActiveRideState, MAX_OPEN_REGROUPS, OpenRegroup, RegroupType } from '../types';
 
 // Off-route detour accumulation guards (see ride:location_update).
 // Below the floor: treat as stationary GPS jitter. Above the ceiling: treat as
@@ -152,8 +152,8 @@ export function setupSocketHandlers(io: Server): void {
             movingSeconds: 0,
             lastLeaderTs: null,
             maxGroupSplitMeters: 0,
-            openRegroup: null,
-            openEmergency: null,
+            openRegroups: new Map(),
+            openEmergencies: new Map(),
           };
 
           rideStore.set(rideId, rebuiltState);
@@ -385,29 +385,14 @@ export function setupSocketHandlers(io: Server): void {
         });
       }
 
-      // Regroup auto-resolution — 30 s grace period prevents instant self-resolve
-      if (state.openRegroup && p.lat !== null && p.lng !== null) {
-        const regroupAgeMs = Date.now() - new Date(state.openRegroup.createdAt).getTime();
-        const dist = haversine(
-          { lat: p.lat, lng: p.lng },
-          { lat: state.openRegroup.lat, lng: state.openRegroup.lng }
-        );
-        if (dist <= 100 && regroupAgeMs >= 30_000) {
-          state.openRegroup.arrivedRiders.add(userId);
-          const activeParticipants = Array.from(state.participants.values()).filter(
-            (x) => x.status === 'ACTIVE'
-          );
-          const allArrived = activeParticipants.every((x) =>
-            state.openRegroup!.arrivedRiders.has(x.userId)
-          );
-          if (allArrived) {
-            const { regroupId } = state.openRegroup;
-            state.openRegroup = null;
-            await resolveRegroupEvent(regroupId).catch(() => {});
-            io.to(`ride:${data.rideId}`).emit('ride:regroup_resolved', {
-              regroupId,
-              resolvedAt: new Date().toISOString(),
-            });
+      // Regroup auto-resolution, per open regroup — 30 s grace period prevents instant self-resolve
+      if (state.openRegroups.size > 0 && p.lat !== null && p.lng !== null) {
+        for (const regroup of Array.from(state.openRegroups.values())) {
+          const regroupAgeMs = Date.now() - new Date(regroup.createdAt).getTime();
+          const dist = haversine({ lat: p.lat, lng: p.lng }, { lat: regroup.lat, lng: regroup.lng });
+          if (dist <= 100 && regroupAgeMs >= 30_000) {
+            regroup.arrivedRiders.add(userId);
+            await resolveIfEveryoneArrived(io, data.rideId, state, regroup);
           }
         }
       }
@@ -445,10 +430,16 @@ export function setupSocketHandlers(io: Server): void {
         }
         console.log(`[ride:regroup] proceeding to DB write — rideId=${data.rideId}`);
 
-        // Only one open regroup at a time — resolve previous if exists
-        if (state.openRegroup) {
-          await resolveRegroupEvent(state.openRegroup.regroupId).catch(() => {});
-          state.openRegroup = null;
+        // A rider has one open regroup: calling another (or double-tapping) replaces their own.
+        for (const open of Array.from(state.openRegroups.values())) {
+          if (open.createdBy === userId) {
+            await closeRegroup(io, data.rideId, state, open.regroupId, 'superseded');
+          }
+        }
+        // Past the cap the oldest is dropped (and everyone is told), so the map stays readable.
+        while (state.openRegroups.size >= MAX_OPEN_REGROUPS) {
+          const oldest = state.openRegroups.keys().next().value as string;
+          await closeRegroup(io, data.rideId, state, oldest, 'capped');
         }
 
         const regroupId = await createRegroupEvent(
@@ -461,7 +452,7 @@ export function setupSocketHandlers(io: Server): void {
 
         const createdAt = new Date().toISOString();
 
-        state.openRegroup = {
+        state.openRegroups.set(regroupId, {
           regroupId,
           type: data.type,
           lat: data.lat,
@@ -469,7 +460,7 @@ export function setupSocketHandlers(io: Server): void {
           createdBy: userId,
           createdAt,
           arrivedRiders: new Set(),
-        };
+        });
 
         if (typeof ack === 'function') ack({ ok: true, regroupId });
 
@@ -496,31 +487,17 @@ export function setupSocketHandlers(io: Server): void {
           if (typeof ack === 'function') ack({ ok: false, error: 'RIDE_NOT_ACTIVE' });
           return;
         }
-        if (!state.openRegroup || state.openRegroup.regroupId !== data.regroupId) {
+        const regroup = state.openRegroups.get(data.regroupId);
+        if (!regroup) {
           if (typeof ack === 'function') ack({ ok: false, error: 'REGROUP_NOT_FOUND' });
           return;
         }
 
-        state.openRegroup.arrivedRiders.add(userId);
-
-        const activeParticipants = Array.from(state.participants.values()).filter(
-          (x) => x.status === 'ACTIVE'
-        );
-        const allArrived = activeParticipants.every((x) =>
-          state.openRegroup!.arrivedRiders.has(x.userId)
-        );
+        regroup.arrivedRiders.add(userId);
 
         if (typeof ack === 'function') ack({ ok: true });
 
-        if (allArrived) {
-          const { regroupId } = state.openRegroup;
-          state.openRegroup = null;
-          await resolveRegroupEvent(regroupId).catch(() => {});
-          io.to(`ride:${data.rideId}`).emit('ride:regroup_resolved', {
-            regroupId,
-            resolvedAt: new Date().toISOString(),
-          });
-        }
+        await resolveIfEveryoneArrived(io, data.rideId, state, regroup);
       }
     );
 
@@ -537,25 +514,19 @@ export function setupSocketHandlers(io: Server): void {
           if (typeof ack === 'function') ack({ ok: false, error: 'RIDE_NOT_ACTIVE' });
           return;
         }
-        if (!state.openRegroup || state.openRegroup.regroupId !== data.regroupId) {
+        const regroup = state.openRegroups.get(data.regroupId);
+        if (!regroup) {
           if (typeof ack === 'function') ack({ ok: false, error: 'REGROUP_NOT_FOUND' });
           return;
         }
-        if (userId !== state.openRegroup.createdBy && userId !== state.leaderId) {
+        if (userId !== regroup.createdBy && userId !== state.leaderId) {
           if (typeof ack === 'function') ack({ ok: false, error: 'NOT_AUTHORIZED' });
           return;
         }
 
-        const { regroupId } = state.openRegroup;
-        state.openRegroup = null;
-        await resolveRegroupEvent(regroupId).catch(() => {});
-
         if (typeof ack === 'function') ack({ ok: true });
 
-        io.to(`ride:${data.rideId}`).emit('ride:regroup_dismissed', {
-          regroupId,
-          dismissedAt: new Date().toISOString(),
-        });
+        await closeRegroup(io, data.rideId, state, regroup.regroupId, 'dismissed');
       }
     );
 
@@ -591,16 +562,26 @@ export function setupSocketHandlers(io: Server): void {
 
         const createdAt = new Date().toISOString();
 
-        // Hold the emergency open so its pin + siren persist on every client (including late
-        // joiners, via buildStatePayload) until the creator or the leader dismisses it.
-        state.openEmergency = {
+        // Every emergency stays open on its own (pin + siren persist on every client, including
+        // late joiners, via buildStatePayload) until its raiser or the leader dismisses it. A rider
+        // raising another replaces their own, so a double-tap doesn't stack two sirens.
+        for (const open of Array.from(state.openEmergencies.values())) {
+          if (open.userId === userId) {
+            state.openEmergencies.delete(open.emergencyId);
+            io.to(`ride:${data.rideId}`).emit('ride:emergency_resolved', {
+              emergencyId: open.emergencyId,
+              resolvedAt: new Date().toISOString(),
+            });
+          }
+        }
+        state.openEmergencies.set(emergencyId, {
           emergencyId,
           userId,
           lat: data.lat,
           lng: data.lng,
           message: data.message,
           createdAt,
-        };
+        });
 
         if (typeof ack === 'function') ack({ ok: true, emergencyId });
 
@@ -628,18 +609,19 @@ export function setupSocketHandlers(io: Server): void {
           if (typeof ack === 'function') ack({ ok: false, error: 'RIDE_NOT_ACTIVE' });
           return;
         }
-        if (!state.openEmergency || state.openEmergency.emergencyId !== data.emergencyId) {
+        const emergency = state.openEmergencies.get(data.emergencyId);
+        if (!emergency) {
           if (typeof ack === 'function') ack({ ok: false, error: 'EMERGENCY_NOT_FOUND' });
           return;
         }
         // Authorization: raiser or leader only.
-        if (userId !== state.openEmergency.userId && userId !== state.leaderId) {
+        if (userId !== emergency.userId && userId !== state.leaderId) {
           if (typeof ack === 'function') ack({ ok: false, error: 'NOT_AUTHORIZED' });
           return;
         }
 
-        const { emergencyId } = state.openEmergency;
-        state.openEmergency = null;
+        const { emergencyId } = emergency;
+        state.openEmergencies.delete(emergencyId);
 
         if (typeof ack === 'function') ack({ ok: true });
 
@@ -670,5 +652,40 @@ export function setupSocketHandlers(io: Server): void {
         }
       }
     });
+  });
+}
+
+/** Clears an open regroup and tells the ride. `reason` lets clients word it: a plain dismissal
+ *  or a swap by the same rider is silent, a drop past the cap is announced. */
+async function closeRegroup(
+  io: Server,
+  rideId: string,
+  state: ActiveRideState,
+  regroupId: string,
+  reason: 'dismissed' | 'superseded' | 'capped'
+): Promise<void> {
+  if (!state.openRegroups.delete(regroupId)) return;
+  await resolveRegroupEvent(regroupId).catch(() => {});
+  io.to(`ride:${rideId}`).emit('ride:regroup_dismissed', {
+    regroupId,
+    reason,
+    dismissedAt: new Date().toISOString(),
+  });
+}
+
+/** Resolves a regroup once every active rider has arrived at it. */
+async function resolveIfEveryoneArrived(
+  io: Server,
+  rideId: string,
+  state: ActiveRideState,
+  regroup: OpenRegroup
+): Promise<void> {
+  const active = Array.from(state.participants.values()).filter((x) => x.status === 'ACTIVE');
+  if (!active.every((x) => regroup.arrivedRiders.has(x.userId))) return;
+  if (!state.openRegroups.delete(regroup.regroupId)) return;
+  await resolveRegroupEvent(regroup.regroupId).catch(() => {});
+  io.to(`ride:${rideId}`).emit('ride:regroup_resolved', {
+    regroupId: regroup.regroupId,
+    resolvedAt: new Date().toISOString(),
   });
 }

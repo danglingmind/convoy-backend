@@ -1149,8 +1149,8 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       movingSeconds: 0,
       lastLeaderTs: null,
       maxGroupSplitMeters: 0,
-      openRegroup: null,
-      openEmergency: null,
+      openRegroups: new Map(),
+      openEmergencies: new Map(),
     };
 
     rideStore.set(rideId, state);

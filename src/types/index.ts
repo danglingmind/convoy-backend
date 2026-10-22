@@ -61,26 +61,37 @@ export interface ActiveRideState {
   lastLeaderTs: number | null;
   // Running max of the leader-to-tail gap ever observed during the ride.
   maxGroupSplitMeters: number;
-  openRegroup: {
-    regroupId: string;
-    type: RegroupType;
-    lat: number;
-    lng: number;
-    createdBy: string;
-    createdAt: string;
-    arrivedRiders: Set<string>;
-  } | null;
+  // Several regroups can be open at once (fuel here, food there), capped at MAX_OPEN_REGROUPS;
+  // each tracks its own arrivals. Keyed by regroupId, in creation order.
+  openRegroups: Map<string, OpenRegroup>;
   // A raised emergency stays open (pin + repeating siren on clients) until the creator or the
   // ride leader explicitly dismisses it — unlike regroup there is no proximity/arrival auto-resolve.
-  openEmergency: {
-    emergencyId: string;
-    userId: string;
-    lat: number;
-    lng: number;
-    message: string;
-    createdAt: string;
-  } | null;
+  // Several riders can need help at once; each emergency stays open independently. Keyed by
+  // emergencyId, in creation order.
+  openEmergencies: Map<string, OpenEmergency>;
 }
+
+export interface OpenRegroup {
+  regroupId: string;
+  type: RegroupType;
+  lat: number;
+  lng: number;
+  createdBy: string;
+  createdAt: string;
+  arrivedRiders: Set<string>;
+}
+
+export interface OpenEmergency {
+  emergencyId: string;
+  userId: string;
+  lat: number;
+  lng: number;
+  message: string;
+  createdAt: string;
+}
+
+/** Most regroups open at once. Past this the oldest is dropped, so the map stays readable. */
+export const MAX_OPEN_REGROUPS = 3;
 
 export interface AuthUser {
   userId: string;
