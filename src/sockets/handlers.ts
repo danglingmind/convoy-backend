@@ -524,6 +524,41 @@ export function setupSocketHandlers(io: Server): void {
       }
     );
 
+    // ride:regroup_dismiss (ack) — only the rider who called the regroup or the ride leader may
+    // clear it before everyone has arrived (a rider who never shows would otherwise hold it open).
+    socket.on(
+      'ride:regroup_dismiss',
+      async (
+        data: { rideId: string; regroupId: string },
+        ack: (res: unknown) => void
+      ) => {
+        const state = rideStore.get(data.rideId);
+        if (!state) {
+          if (typeof ack === 'function') ack({ ok: false, error: 'RIDE_NOT_ACTIVE' });
+          return;
+        }
+        if (!state.openRegroup || state.openRegroup.regroupId !== data.regroupId) {
+          if (typeof ack === 'function') ack({ ok: false, error: 'REGROUP_NOT_FOUND' });
+          return;
+        }
+        if (userId !== state.openRegroup.createdBy && userId !== state.leaderId) {
+          if (typeof ack === 'function') ack({ ok: false, error: 'NOT_AUTHORIZED' });
+          return;
+        }
+
+        const { regroupId } = state.openRegroup;
+        state.openRegroup = null;
+        await resolveRegroupEvent(regroupId).catch(() => {});
+
+        if (typeof ack === 'function') ack({ ok: true });
+
+        io.to(`ride:${data.rideId}`).emit('ride:regroup_dismissed', {
+          regroupId,
+          dismissedAt: new Date().toISOString(),
+        });
+      }
+    );
+
     // ride:emergency (ack)
     socket.on(
       'ride:emergency',
