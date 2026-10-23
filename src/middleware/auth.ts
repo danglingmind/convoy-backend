@@ -1,7 +1,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { verifyToken } from '@clerk/backend';
 import { upsertUser } from '../db/userRepo';
-import { capture } from '../services/analytics';
+import { captureReq } from '../services/analytics';
 
 export async function clerkAuth(
   request: FastifyRequest,
@@ -31,7 +31,7 @@ export async function clerkAuth(
 
     request.user = { userId: payload.sub, name, avatarUrl };
 
-    if (await upsertUser(payload.sub, name, avatarUrl)) capture(payload.sub, 'signed_up');
+    if (await upsertUser(payload.sub, name, avatarUrl)) captureReq(request, payload.sub, 'signed_up');
   } catch (err) {
     request.log.warn({ err }, 'Clerk token verification failed');
     reply.code(401).send({ error: 'INVALID_TOKEN' });

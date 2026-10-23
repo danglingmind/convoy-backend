@@ -10,6 +10,8 @@ import { membershipRoutes } from './routes/memberships';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const fastify = Fastify({
+    // Behind Render's proxy: makes request.ip the rider's address (X-Forwarded-For), not the proxy's.
+    trustProxy: true,
     logger: {
       level: process.env.LOG_LEVEL ?? 'info',
       transport:

@@ -42,18 +42,16 @@ export function capture(
   distinctId: string,
   event: string,
   props: Props = {},
-  opts: { at?: Date; set?: Props } = {}
+  opts: { at?: Date; set?: Props; ip?: string } = {}
 ): void {
   if (!analyticsEnabled) return;
-  // $geoip_disable: the request comes from our server, so PostHog's IP lookup would stamp the
-  // data centre's location onto the rider (and onto their person profile). The apps' own events
-  // carry the device's IP and set the real location.
-  const properties: Record<string, unknown> = {
-    ...props,
-    source: 'server',
-    $lib: 'convoy-backend',
-    $geoip_disable: true,
-  };
+  const properties: Record<string, unknown> = { ...props, source: 'server', $lib: 'convoy-backend' };
+  // PostHog locates a rider from the IP of the request that carries the event. From our server
+  // that is the data centre, so a server event passes the rider's own IP (`$ip`) when it has one.
+  // Without one (an event attributed to someone other than whoever triggered it) GeoIP is switched
+  // off, so the data centre's location never lands on a rider or their profile.
+  if (opts.ip) properties.$ip = opts.ip;
+  else properties.$geoip_disable = true;
   if (opts.set) properties.$set = opts.set;
   queue.push({
     event,
@@ -108,3 +106,34 @@ export async function flushAnalytics(): Promise<void> {
 /** Rounded kilometres for event properties (a count-like figure, not a trace of the route). */
 export const km = (meters: number | null | undefined): number | undefined =>
   typeof meters === 'number' && Number.isFinite(meters) ? Math.round(meters / 100) / 10 : undefined;
+
+/** The rider's address for an event: the first hop of X-Forwarded-For (Render's proxy), else the socket's. */
+export function clientIp(forwardedFor: string | string[] | undefined, fallback?: string): string | undefined {
+  const raw = (Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor)?.split(',')[0]?.trim() || fallback;
+  return raw?.replace(/^::ffff:/, '') || undefined;
+}
+
+/** `capture` for an HTTP request: attributes the event's location to the caller. */
+export function captureReq(
+  request: { ip: string },
+  distinctId: string,
+  event: string,
+  props: Props = {},
+  opts: { at?: Date; set?: Props } = {}
+): void {
+  capture(distinctId, event, props, { ...opts, ip: request.ip });
+}
+
+/** `capture` for a socket event: attributes the event's location to the connected rider. */
+export function captureSocket(
+  socket: { handshake: { headers: Record<string, string | string[] | undefined>; address: string } },
+  distinctId: string,
+  event: string,
+  props: Props = {},
+  opts: { at?: Date; set?: Props } = {}
+): void {
+  capture(distinctId, event, props, {
+    ...opts,
+    ip: clientIp(socket.handshake.headers['x-forwarded-for'], socket.handshake.address),
+  });
+}

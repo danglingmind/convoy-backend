@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { pool } from '../db/pool';
 import { readDeviceId, deviceIdHeaderSchema } from '../services/quotaService';
-import { capture } from '../services/analytics';
+import { captureReq } from '../services/analytics';
 
 const security = [{ bearerAuth: [] }];
 
@@ -89,7 +89,7 @@ export async function eventsRoutes(fastify: FastifyInstance): Promise<void> {
     // The same funnel into PostHog, so it sits next to ride and retention data. The apps send
     // these only here (not also direct to PostHog), so nothing is counted twice.
     for (const r of rows) {
-      capture(userId, r[2] as string, {
+      captureReq(request, userId, r[2] as string, {
         source_screen: r[3] as string | null,
         access: r[4] as string | null,
         platform: r[5] as string,

@@ -14,7 +14,7 @@ import { getRideById, getRideWithPolyline } from '../db/rideRepo';
 import { decodePolyline, computeCumulativeDist } from '../engines/polylineDecoder';
 import { createRegroupEvent, resolveRegroupEvent } from '../db/regroupRepo';
 import { createEmergencyEvent } from '../db/emergencyRepo';
-import { capture, km } from '../services/analytics';
+import { capture, captureSocket, km } from '../services/analytics';
 import { ActiveRideState, MAX_OPEN_REGROUPS, OpenRegroup, RegroupType } from '../types';
 
 // Off-route detour accumulation guards (see ride:location_update).
@@ -469,7 +469,7 @@ export function setupSocketHandlers(io: Server): void {
         });
 
         if (typeof ack === 'function') ack({ ok: true, regroupId });
-        capture(userId, 'regroup_called', {
+        captureSocket(socket, userId, 'regroup_called', {
           reason: data.type,
           rider_count: state.participants.size,
           by_leader: state.leaderId === userId,
@@ -595,7 +595,7 @@ export function setupSocketHandlers(io: Server): void {
         });
 
         if (typeof ack === 'function') ack({ ok: true, emergencyId });
-        capture(userId, 'emergency_raised', {
+        captureSocket(socket, userId, 'emergency_raised', {
           rider_count: state.participants.size,
           by_leader: state.leaderId === userId,
           has_message: !!data.message?.trim(),
