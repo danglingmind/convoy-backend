@@ -1323,6 +1323,24 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       server_state_lost: !state,
     });
 
+    // One per rider still in the ride, so "took part in a ride" is measurable for joiners too
+    // (ride_ended is the leader's alone). Best-effort: it must never fail the end of a ride.
+    try {
+      const riders = (await getParticipantsWithUsers(rideId)).filter((p) => p.status !== 'LEFT');
+      const durationMin = ride.started_at
+        ? Math.round((endedAt.getTime() - new Date(ride.started_at).getTime()) / 60_000)
+        : undefined;
+      for (const r of riders) {
+        capture(r.user_id, 'ride_completed', {
+          duration_min: durationMin,
+          rider_count: riders.length,
+          is_leader: r.user_id === ride.leader_id,
+        });
+      }
+    } catch (err) {
+      request.log.warn({ err }, 'ride_completed analytics skipped');
+    }
+
     rideStore.delete(rideId);
 
     try {
