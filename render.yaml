@@ -26,6 +26,13 @@ services:
       # TRIAL_EXPIRED are live; flipping it to "true" starts every free rider's 3 days.
       - key: TRIAL_ENFORCEMENT_ENABLED
         value: "false"
+      # Product analytics (PostHog). Unset = nothing is sent. The project API key is the same
+      # public write-only key the apps embed; the host depends on the project's region
+      # (https://us.i.posthog.com or https://eu.i.posthog.com).
+      - key: POSTHOG_API_KEY
+        sync: false
+      - key: POSTHOG_HOST
+        value: https://us.i.posthog.com
       # Google Play subscription verification. Until these are set, Play
       # activations answer 502 PLAY_VERIFICATION_UNAVAILABLE and the Apple
       # path is unaffected.

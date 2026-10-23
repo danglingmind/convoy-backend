@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { getUserById } from '../db/userRepo';
+import { capture } from '../services/analytics';
 import {
   getPremiumPlan,
   upsertMembership,
@@ -336,6 +337,15 @@ export async function membershipRoutes(fastify: FastifyInstance): Promise<void> 
         request.log.warn({ err }, 'Play purchase acknowledgement failed');
       }
     }
+
+    // Fires on every successful activate (the apps re-send on restore), so the same purchase can
+    // appear more than once; analyse it as distinct users, not a count of events.
+    capture(
+      userId,
+      'subscription_activated',
+      { provider, product_id: productId, environment },
+      { set: { plan: 'pro' } }
+    );
 
     return { ok: true, plan: planResponse(premiumPlan, expiresDate) };
   });

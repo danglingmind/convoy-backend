@@ -2,6 +2,7 @@ import { Server } from 'socket.io';
 import { IncomingMessage, Server as HttpServer, ServerResponse } from 'http';
 import { verifyToken } from '@clerk/backend';
 import { upsertUser, getUserById } from '../db/userRepo';
+import { capture } from '../services/analytics';
 import { setupSocketHandlers } from './handlers';
 import { startPresenceSweeper } from './presence';
 
@@ -61,7 +62,7 @@ export function initSocketServer(
 
       console.log(`[socket:auth] OK — userId=${payload.sub} name="${name}"`);
       // Seed a row for brand-new users; upsert never overwrites an existing name.
-      if (!dbUser) await upsertUser(payload.sub, name, avatarUrl);
+      if (!dbUser && (await upsertUser(payload.sub, name, avatarUrl))) capture(payload.sub, 'signed_up');
       next();
     } catch (err) {
       console.error('[socket:auth] REJECTED — token verification failed:', err);

@@ -28,6 +28,7 @@ import {
 } from '../db/participantRepo';
 import { getSummaryWithParticipants } from '../db/summaryRepo';
 import { canUserParticipate, getUserPlanOrFree, QuotaResult, readDeviceId, deviceIdHeaderSchema } from '../services/quotaService';
+import { capture, km } from '../services/analytics';
 import { generateRideSummary, generateFallbackSummary } from '../services/summaryService';
 import { deleteClerkUser } from '../services/clerkAdmin';
 import { generateInviteCode } from '../utils/inviteCode';
@@ -241,6 +242,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     request.log.info({ userId, ...counts }, 'account deleted');
+    capture(userId, 'account_deleted');
     return { ok: true };
   });
 
@@ -466,6 +468,14 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
 
     // Auto-join leader as participant
     await addParticipant(rideId, userId);
+
+    capture(userId, 'ride_created', {
+      distance_km: km(Number(body.distanceMeters)),
+      est_duration_min: Math.round(Number(body.estimatedDurationSeconds) / 60) || undefined,
+      waypoint_count: Array.isArray(body.waypoints) ? body.waypoints.length : 0,
+      max_riders: maxAllowed,
+      plan: plan.code,
+    });
 
     return { rideId, inviteCode };
   });
@@ -857,6 +867,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     await deleteRide(rideId);
+    capture(userId, 'ride_deleted', { ride_status: ride.status });
 
     return { ok: true };
   });
@@ -903,6 +914,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     await updateParticipantStatus(rideId, targetUserId, 'LEFT');
+    capture(userId, 'rider_removed', { ride_status: ride.status });
 
     // Drop from in-memory state if the ride is already live
     const state = rideStore.get(rideId);
@@ -981,6 +993,12 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       await addParticipant(rideId, userId);
     }
 
+    capture(userId, 'ride_joined', {
+      rider_count: current + 1,
+      rejoin: !!existing,
+      plan: quota.plan.code,
+    });
+
     return { ok: true };
   });
 
@@ -1025,6 +1043,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     await updateParticipantStatus(rideId, userId, 'LEFT');
+    capture(userId, 'ride_left', { ride_status: ride.status });
 
     // DELETE from the live state, don't just flag it. `buildStatePayload` maps every entry in
     // `state.participants` with no status filter, so a participant merely marked LEFT keeps
@@ -1154,6 +1173,13 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
     };
 
     rideStore.set(rideId, state);
+
+    capture(userId, 'ride_started', {
+      rider_count: participantMap.size,
+      distance_km: km(ride.distance_meters),
+      // Lobby dwell: how long the leader took from creating the ride to setting off.
+      lobby_minutes: ride.created_at ? Math.round((Date.now() - new Date(ride.created_at).getTime()) / 60_000) : undefined,
+    });
 
     try {
       getIO().to(`ride:${rideId}`).emit('ride:state_update', buildStatePayload(state));
@@ -1288,6 +1314,14 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
         rideId, ride.leader_id, ride.started_at, endedAt, ride.distance_meters
       );
     }
+
+    capture(userId, 'ride_ended', {
+      duration_min: ride.started_at ? Math.round((endedAt.getTime() - new Date(ride.started_at).getTime()) / 60_000) : undefined,
+      rider_count: state?.participants.size,
+      distance_km: km(state ? state.maxLeaderProgress + state.detourMeters : ride.distance_meters),
+      max_split_km: state ? km(state.maxGroupSplitMeters) : undefined,
+      server_state_lost: !state,
+    });
 
     rideStore.delete(rideId);
 

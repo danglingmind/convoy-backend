@@ -14,6 +14,7 @@ import { getRideById, getRideWithPolyline } from '../db/rideRepo';
 import { decodePolyline, computeCumulativeDist } from '../engines/polylineDecoder';
 import { createRegroupEvent, resolveRegroupEvent } from '../db/regroupRepo';
 import { createEmergencyEvent } from '../db/emergencyRepo';
+import { capture, km } from '../services/analytics';
 import { ActiveRideState, MAX_OPEN_REGROUPS, OpenRegroup, RegroupType } from '../types';
 
 // Off-route detour accumulation guards (see ride:location_update).
@@ -373,6 +374,11 @@ export function setupSocketHandlers(io: Server): void {
       if (!prevSplitActive && state.splitActive && state.leaderboard.length >= 2) {
         const leader = state.leaderboard[0];
         const last = state.leaderboard[state.leaderboard.length - 1];
+        // Attributed to the leader: the split is a property of the group, not of whoever's GPS tick tripped it.
+        capture(state.leaderId, 'group_split_detected', {
+          gap_km: km(last.gapMeters),
+          rider_count: state.participants.size,
+        });
         io.to(`ride:${data.rideId}`).emit('ride:split_detected', {
           gapMeters: last.gapMeters,
           leaderId: leader.userId,
@@ -463,6 +469,11 @@ export function setupSocketHandlers(io: Server): void {
         });
 
         if (typeof ack === 'function') ack({ ok: true, regroupId });
+        capture(userId, 'regroup_called', {
+          reason: data.type,
+          rider_count: state.participants.size,
+          by_leader: state.leaderId === userId,
+        });
 
         io.to(`ride:${data.rideId}`).emit('ride:regroup_started', {
           regroupId,
@@ -584,6 +595,11 @@ export function setupSocketHandlers(io: Server): void {
         });
 
         if (typeof ack === 'function') ack({ ok: true, emergencyId });
+        capture(userId, 'emergency_raised', {
+          rider_count: state.participants.size,
+          by_leader: state.leaderId === userId,
+          has_message: !!data.message?.trim(),
+        });
 
         io.to(`ride:${data.rideId}`).emit('ride:emergency_started', {
           emergencyId,

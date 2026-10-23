@@ -25,14 +25,17 @@ export async function upsertUser(
   id: string,
   name: string,
   avatarUrl: string | null
-): Promise<void> {
-  await pool.query(
+): Promise<boolean> {
+  // `xmax = 0` is true only for a freshly inserted row, so callers can tell a sign-up from a return.
+  const { rows } = await pool.query<{ inserted: boolean }>(
     `INSERT INTO users (id, name, avatar_url, created_at)
      VALUES ($1, $2, $3, now())
      ON CONFLICT (id) DO UPDATE
-       SET avatar_url = COALESCE(EXCLUDED.avatar_url, users.avatar_url)`,
+       SET avatar_url = COALESCE(EXCLUDED.avatar_url, users.avatar_url)
+     RETURNING (xmax = 0) AS inserted`,
     [id, name, avatarUrl]
   );
+  return rows[0]?.inserted === true;
 }
 
 export async function updateUserProfile(

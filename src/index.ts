@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { buildApp } from './app';
 import { initSocketServer } from './sockets/server';
+import { flushAnalytics } from './services/analytics';
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
 
@@ -12,6 +13,11 @@ async function main(): Promise<void> {
 
   initSocketServer(app.server);
   app.log.info('Socket.IO initialized');
+
+  // Render sends SIGTERM on every deploy; push the queued analytics events out before exiting.
+  process.once('SIGTERM', () => {
+    void flushAnalytics().finally(() => process.exit(0));
+  });
 }
 
 main().catch((err) => {
