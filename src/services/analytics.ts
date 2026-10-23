@@ -45,7 +45,15 @@ export function capture(
   opts: { at?: Date; set?: Props } = {}
 ): void {
   if (!analyticsEnabled) return;
-  const properties: Record<string, unknown> = { ...props, source: 'server', $lib: 'convoy-backend' };
+  // $geoip_disable: the request comes from our server, so PostHog's IP lookup would stamp the
+  // data centre's location onto the rider (and onto their person profile). The apps' own events
+  // carry the device's IP and set the real location.
+  const properties: Record<string, unknown> = {
+    ...props,
+    source: 'server',
+    $lib: 'convoy-backend',
+    $geoip_disable: true,
+  };
   if (opts.set) properties.$set = opts.set;
   queue.push({
     event,
