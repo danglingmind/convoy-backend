@@ -12,7 +12,8 @@ import {
 } from '../db/participantRepo';
 import { getRideById, getRideWithPolyline } from '../db/rideRepo';
 import { decodePolyline, computeCumulativeDist } from '../engines/polylineDecoder';
-import { createRegroupEvent, resolveRegroupEvent } from '../db/regroupRepo';
+import { createRegroupEvent, resolveRegroupEvent, RegroupCloseReason } from '../db/regroupRepo';
+import { recordLeaderFix } from '../services/trackService';
 import { createEmergencyEvent } from '../db/emergencyRepo';
 import { capture, captureSocket, km } from '../services/analytics';
 import { ActiveRideState, MAX_OPEN_REGROUPS, OpenRegroup, RegroupType } from '../types';
@@ -155,6 +156,10 @@ export function setupSocketHandlers(io: Server): void {
             maxGroupSplitMeters: 0,
             openRegroups: new Map(),
             openEmergencies: new Map(),
+            trackBuffer: [],
+            lastTrackPoint: null,
+            lastTrackFlushAt: Date.now(),
+            trackFlushing: false,
           };
 
           rideStore.set(rideId, rebuiltState);
@@ -361,6 +366,14 @@ export function setupSocketHandlers(io: Server): void {
             }
           }
         }
+
+        recordLeaderFix(
+          state,
+          point,
+          p.offRoute,
+          state.lastLeaderPoint ? haversine(state.lastLeaderPoint, point) : null,
+          LEADER_MAX_JUMP_METERS
+        );
 
         state.lastLeaderPoint = point;
         state.lastLeaderTs = now;
@@ -681,7 +694,12 @@ async function closeRegroup(
   reason: 'dismissed' | 'superseded' | 'capped'
 ): Promise<void> {
   if (!state.openRegroups.delete(regroupId)) return;
-  await resolveRegroupEvent(regroupId).catch(() => {});
+  const closeReason: Record<typeof reason, RegroupCloseReason> = {
+    dismissed: 'DISMISSED',
+    superseded: 'SUPERSEDED',
+    capped: 'CAPPED',
+  };
+  await resolveRegroupEvent(regroupId, closeReason[reason]).catch(() => {});
   io.to(`ride:${rideId}`).emit('ride:regroup_dismissed', {
     regroupId,
     reason,
@@ -699,7 +717,7 @@ async function resolveIfEveryoneArrived(
   const active = Array.from(state.participants.values()).filter((x) => x.status === 'ACTIVE');
   if (!active.every((x) => regroup.arrivedRiders.has(x.userId))) return;
   if (!state.openRegroups.delete(regroup.regroupId)) return;
-  await resolveRegroupEvent(regroup.regroupId).catch(() => {});
+  await resolveRegroupEvent(regroup.regroupId, 'RESOLVED').catch(() => {});
   io.to(`ride:${rideId}`).emit('ride:regroup_resolved', {
     regroupId: regroup.regroupId,
     resolvedAt: new Date().toISOString(),

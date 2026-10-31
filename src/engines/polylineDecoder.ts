@@ -41,3 +41,28 @@ export function computeCumulativeDist(points: LatLng[]): number[] {
   }
   return cum;
 }
+
+function encodeValue(value: number, out: string[]): void {
+  let v = value < 0 ? ~(value << 1) : value << 1;
+  while (v >= 0x20) {
+    out.push(String.fromCharCode((0x20 | (v & 0x1f)) + 63));
+    v >>= 5;
+  }
+  out.push(String.fromCharCode(v + 63));
+}
+
+/** Google encoded polyline (precision 5), the inverse of decodePolyline. */
+export function encodePolyline(points: LatLng[]): string {
+  const out: string[] = [];
+  let prevLat = 0;
+  let prevLng = 0;
+  for (const p of points) {
+    const lat = Math.round(p.lat * 1e5);
+    const lng = Math.round(p.lng * 1e5);
+    encodeValue(lat - prevLat, out);
+    encodeValue(lng - prevLng, out);
+    prevLat = lat;
+    prevLng = lng;
+  }
+  return out.join('');
+}

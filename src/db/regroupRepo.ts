@@ -28,11 +28,47 @@ export async function createRegroupEvent(
   return rows[0].id;
 }
 
-export async function resolveRegroupEvent(id: string): Promise<void> {
+export type RegroupCloseReason = 'RESOLVED' | 'DISMISSED' | 'SUPERSEDED' | 'CAPPED' | 'RIDE_ENDED';
+
+export async function resolveRegroupEvent(id: string, reason: RegroupCloseReason): Promise<void> {
   await pool.query(
-    `UPDATE regroup_events SET resolved_at = now() WHERE id = $1`,
-    [id]
+    `UPDATE regroup_events SET resolved_at = now(), close_reason = $2 WHERE id = $1`,
+    [id, reason]
   );
+}
+
+/** Closes whatever is still open when a ride ends, whether or not in-memory state survived. */
+export async function closeOpenRegroupsForRide(rideId: string): Promise<void> {
+  await pool.query(
+    `UPDATE regroup_events SET resolved_at = now(), close_reason = 'RIDE_ENDED'
+     WHERE ride_id = $1 AND resolved_at IS NULL`,
+    [rideId]
+  );
+}
+
+export interface LeaderStopRow {
+  id: string;
+  type: RegroupType;
+  lat: number;
+  lng: number;
+  created_at: Date;
+}
+
+/** Regroups the ride leader called, minus ones they immediately replaced (mis-taps). Emergencies
+ *  live in their own table, so they never appear here. Rows from before close_reason existed
+ *  have NULL and count as real stops. */
+export async function listLeaderStops(rideId: string): Promise<LeaderStopRow[]> {
+  const { rows } = await pool.query<LeaderStopRow>(
+    `SELECT e.id, e.type, e.lat, e.lng, e.created_at
+     FROM regroup_events e
+     JOIN rides r ON r.id = e.ride_id
+     WHERE e.ride_id = $1
+       AND e.created_by = r.leader_id
+       AND e.close_reason IS DISTINCT FROM 'SUPERSEDED'
+     ORDER BY e.created_at`,
+    [rideId]
+  );
+  return rows;
 }
 
 export async function countRegroupEvents(rideId: string): Promise<number> {

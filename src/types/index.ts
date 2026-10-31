@@ -69,6 +69,17 @@ export interface ActiveRideState {
   // Several riders can need help at once; each emergency stays open independently. Keyed by
   // emergencyId, in creation order.
   openEmergencies: Map<string, OpenEmergency>;
+  // Leader track recording: fixes waiting to be written to ride_track_points. See trackService.
+  trackBuffer: TrackPoint[];
+  lastTrackPoint: { lat: number; lng: number } | null;
+  lastTrackFlushAt: number;
+  trackFlushing: boolean;
+}
+
+export interface TrackPoint {
+  lat: number;
+  lng: number;
+  offRoute: boolean;
 }
 
 export interface OpenRegroup {

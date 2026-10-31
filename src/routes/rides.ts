@@ -38,6 +38,8 @@ import { rideStore } from '../store/rideStore';
 import { getIO } from '../sockets/server';
 import { buildStatePayload } from '../sockets/broadcaster';
 import { ActiveRideState, WaypointType } from '../types';
+import { finalizeLeaderTrack } from '../services/trackService';
+import { closeOpenRegroupsForRide } from '../db/regroupRepo';
 
 const security = [{ bearerAuth: [] }];
 
@@ -1170,6 +1172,10 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       maxGroupSplitMeters: 0,
       openRegroups: new Map(),
       openEmergencies: new Map(),
+      trackBuffer: [],
+      lastTrackPoint: null,
+      lastTrackFlushAt: Date.now(),
+      trackFlushing: false,
     };
 
     rideStore.set(rideId, state);
@@ -1306,12 +1312,19 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
 
     const state = rideStore.get(rideId);
 
+    // Condense the leader's recorded track and close any regroups still open. Both are
+    // best-effort and independent of the summary below.
+    const actualDistance = await finalizeLeaderTrack(rideId, state);
+    await closeOpenRegroupsForRide(rideId).catch((err) =>
+      request.log.warn({ err }, 'closing open regroups at ride end failed'));
+
     if (state && ride.started_at) {
       await generateRideSummary(rideId, ride.started_at, endedAt, state);
     } else if (ride.started_at) {
-      // In-memory state lost (server restart). Create a fallback summary from DB data.
+      // In-memory state lost (server restart). Create a fallback summary from DB data, using
+      // the recorded track's length when there is one rather than the planned route's.
       await generateFallbackSummary(
-        rideId, ride.leader_id, ride.started_at, endedAt, ride.distance_meters
+        rideId, ride.leader_id, ride.started_at, endedAt, actualDistance ?? ride.distance_meters
       );
     }
 

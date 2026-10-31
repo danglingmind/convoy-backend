@@ -11,4 +11,5 @@ export const rideStore = {
     store.delete(rideId);
   },
   has: (rideId: string): boolean => store.has(rideId),
+  all: (): ActiveRideState[] => Array.from(store.values()),
 };
