@@ -39,7 +39,8 @@ import { getIO } from '../sockets/server';
 import { buildStatePayload } from '../sockets/broadcaster';
 import { ActiveRideState, WaypointType } from '../types';
 import { finalizeLeaderTrack } from '../services/trackService';
-import { closeOpenRegroupsForRide } from '../db/regroupRepo';
+import { closeOpenRegroupsForRide, listLeaderStops } from '../db/regroupRepo';
+import { getActualRoutePolyline } from '../db/trackRepo';
 
 const security = [{ bearerAuth: [] }];
 
@@ -1388,6 +1389,24 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
             totalRegroups: { type: 'integer' },
             totalEmergencies: { type: 'integer' },
             createdAt: { type: 'string', format: 'date-time' },
+            actualRoutePolyline: {
+              type: 'string', nullable: true,
+              description: 'Google encoded polyline of the route the leader actually rode. Null for rides that ended before track recording, or with no usable fixes.',
+            },
+            leaderStops: {
+              type: 'array',
+              description: 'Regroup stops the leader called, in order. Emergencies and replaced (mis-tapped) regroups are excluded.',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string', format: 'uuid' },
+                  type: { type: 'string', enum: ['FUEL', 'FOOD', 'SCENIC', 'STOP'] },
+                  lat: { type: 'number' },
+                  lng: { type: 'number' },
+                  createdAt: { type: 'string', format: 'date-time' },
+                },
+              },
+            },
             participants: {
               type: 'array',
               items: {
@@ -1430,6 +1449,10 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     const { summary, participants } = result;
+    const [actualRoutePolyline, leaderStops] = await Promise.all([
+      getActualRoutePolyline(rideId),
+      listLeaderStops(rideId),
+    ]);
 
     return {
       rideId: summary.rideId,
@@ -1441,6 +1464,14 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       totalRegroups: summary.totalRegroups,
       totalEmergencies: summary.totalEmergencies,
       createdAt: summary.createdAt,
+      actualRoutePolyline,
+      leaderStops: leaderStops.map((st) => ({
+        id: st.id,
+        type: st.type,
+        lat: st.lat,
+        lng: st.lng,
+        createdAt: st.created_at,
+      })),
       participants,
     };
   });

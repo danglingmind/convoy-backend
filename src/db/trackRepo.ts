@@ -49,3 +49,11 @@ export async function deleteTrackPointsOlderThan(days: number): Promise<number> 
   );
   return rowCount ?? 0;
 }
+
+export async function getActualRoutePolyline(rideId: string): Promise<string | null> {
+  const { rows } = await pool.query<{ actual_route_polyline: string | null }>(
+    `SELECT actual_route_polyline FROM rides WHERE id = $1`,
+    [rideId]
+  );
+  return rows[0]?.actual_route_polyline ?? null;
+}

@@ -2027,6 +2027,43 @@
                       "type": "string",
                       "format": "date-time"
                     },
+                    "actualRoutePolyline": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Google encoded polyline of the route the leader actually rode. Null for rides that ended before track recording, or with no usable fixes."
+                    },
+                    "leaderStops": {
+                      "type": "array",
+                      "description": "Regroup stops the leader called, in order. Emergencies and replaced (mis-tapped) regroups are excluded.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "FUEL",
+                              "FOOD",
+                              "SCENIC",
+                              "STOP"
+                            ]
+                          },
+                          "lat": {
+                            "type": "number"
+                          },
+                          "lng": {
+                            "type": "number"
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    },
                     "participants": {
                       "type": "array",
                       "items": {
