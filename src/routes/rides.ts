@@ -41,6 +41,7 @@ import { ActiveRideState, WaypointType } from '../types';
 import { finalizeLeaderTrack } from '../services/trackService';
 import { closeOpenRegroupsForRide, listLeaderStops } from '../db/regroupRepo';
 import { getActualRoutePolyline } from '../db/trackRepo';
+import { markCloned } from '../db/shareRepo';
 
 const security = [{ bearerAuth: [] }];
 
@@ -346,6 +347,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
           estimatedDurationSeconds: { type: 'number' },
           maxAllowedParticipants: { type: 'integer' },
           waypoints: { type: 'array', items: waypointSchema, minItems: 1 },
+          sourceShareToken: { type: 'string', maxLength: 12, description: 'Share token of the ride this one was cloned from.' },
         },
       },
       response: {
@@ -373,6 +375,7 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       distanceMeters: number;
       estimatedDurationSeconds: number;
       maxAllowedParticipants: number;
+      sourceShareToken?: string;
       waypoints: {
         order: number;
         name: string;
@@ -472,7 +475,13 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
     // Auto-join leader as participant
     await addParticipant(rideId, userId);
 
+    let cloned = false;
+    if (body.sourceShareToken) {
+      cloned = await markCloned(rideId, body.sourceShareToken).catch(() => false);
+    }
+
     captureReq(request, userId, 'ride_created', {
+      cloned,
       distance_km: km(Number(body.distanceMeters)),
       est_duration_min: Math.round(Number(body.estimatedDurationSeconds) / 60) || undefined,
       waypoint_count: Array.isArray(body.waypoints) ? body.waypoints.length : 0,

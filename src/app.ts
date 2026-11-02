@@ -7,6 +7,7 @@ import { deeplinkRoutes } from './routes/deeplink';
 import { ridesRoutes } from './routes/rides';
 import { eventsRoutes } from './routes/events';
 import { membershipRoutes } from './routes/memberships';
+import { shareManagementRoutes, sharedRouteRoutes } from './routes/sharedRoutes';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const fastify = Fastify({
@@ -49,6 +50,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Public routes (no auth)
   await fastify.register(healthRoutes);
   await fastify.register(deeplinkRoutes);
+  await fastify.register(sharedRouteRoutes);
 
   // Protected routes
   await fastify.register(async (protected_) => {
@@ -56,6 +58,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     await protected_.register(ridesRoutes);
     await protected_.register(membershipRoutes);
     await protected_.register(eventsRoutes);
+    await protected_.register(shareManagementRoutes);
   });
 
   // Global error handler

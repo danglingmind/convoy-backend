@@ -25,11 +25,13 @@ export async function getTrackPoints(rideId: string): Promise<TrackPoint[]> {
 export async function saveActualRoute(
   rideId: string,
   polyline: string,
-  distanceMeters: number
+  distanceMeters: number,
+  viaPoints: { lat: number; lng: number }[]
 ): Promise<void> {
   await pool.query(
-    `UPDATE rides SET actual_route_polyline = $2, actual_distance_meters = $3 WHERE id = $1`,
-    [rideId, polyline, distanceMeters]
+    `UPDATE rides SET actual_route_polyline = $2, actual_distance_meters = $3, via_points = $4
+     WHERE id = $1`,
+    [rideId, polyline, distanceMeters, JSON.stringify(viaPoints)]
   );
 }
 

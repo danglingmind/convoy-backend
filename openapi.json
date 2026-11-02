@@ -63,6 +63,180 @@
         }
       }
     },
+    "/shared-routes/{token}": {
+      "get": {
+        "summary": "Public route data for a shared completed ride",
+        "tags": [
+          "Share"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-HJKMNP-Z2-9]{10}$"
+            },
+            "in": "path",
+            "name": "token",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "plannedRoutePolyline": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Planned route, first 500 m withheld."
+                    },
+                    "actualRoutePolyline": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Route actually ridden, start (and a stray end) withheld. Null for older rides."
+                    },
+                    "distanceMeters": {
+                      "type": "number"
+                    },
+                    "durationSeconds": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "destinationName": {
+                      "type": "string"
+                    },
+                    "waypoints": {
+                      "type": "array",
+                      "description": "Stops after the start, in order. The START waypoint is never included.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "order": {
+                            "type": "integer"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "lat": {
+                            "type": "number"
+                          },
+                          "lng": {
+                            "type": "number"
+                          },
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "WAYPOINT",
+                              "DESTINATION"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "leaderStops": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "FUEL",
+                              "FOOD",
+                              "SCENIC",
+                              "STOP"
+                            ]
+                          },
+                          "lat": {
+                            "type": "number"
+                          },
+                          "lng": {
+                            "type": "number"
+                          }
+                        }
+                      }
+                    },
+                    "viaPoints": {
+                      "type": "array",
+                      "description": "One point per stretch where the leader left the planned route. Route a clone through these to follow the roads actually ridden.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "lat": {
+                            "type": "number"
+                          },
+                          "lng": {
+                            "type": "number"
+                          }
+                        }
+                      }
+                    },
+                    "riderCount": {
+                      "type": "integer"
+                    },
+                    "endedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "sharedBy": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "firstName": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "SHARE_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "SHARE_NOT_FOUND",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "RATE_LIMITED",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/users/me": {
       "patch": {
         "summary": "Update current user profile",
@@ -552,6 +726,11 @@
                       }
                     },
                     "minItems": 1
+                  },
+                  "sourceShareToken": {
+                    "type": "string",
+                    "maxLength": 12,
+                    "description": "Share token of the ride this one was cloned from."
                   }
                 }
               }
@@ -2371,6 +2550,169 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rides/{rideId}/share": {
+      "post": {
+        "summary": "Create (or fetch) the public share link for a completed ride",
+        "tags": [
+          "Share"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "rideId",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "NOT_PARTICIPANT",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "NOT_PARTICIPANT",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "RIDE_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "RIDE_NOT_FOUND",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "RIDE_NOT_COMPLETED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "RIDE_NOT_COMPLETED",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Turn the share link off (leader only)",
+        "tags": [
+          "Share"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "in": "path",
+            "name": "rideId",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "NOT_LEADER",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "NOT_LEADER",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "RIDE_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "RIDE_NOT_FOUND",
                   "properties": {
                     "error": {
                       "type": "string"

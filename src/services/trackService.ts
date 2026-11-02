@@ -3,6 +3,7 @@ import { insertTrackPoints, getTrackPoints, saveActualRoute } from '../db/trackR
 import { encodePolyline, computeCumulativeDist } from '../engines/polylineDecoder';
 import { simplifyTrack } from '../engines/trackSimplifier';
 import { haversine } from '../utils/geo';
+import { findDetourViaPoints } from '../engines/detours';
 
 /** A fix is kept only once the leader has moved this far from the last kept one. */
 export const TRACK_MIN_SPACING_METERS = 20;
@@ -85,7 +86,9 @@ export async function finalizeLeaderTrack(
     const simplified = simplifyTrack(points, SIMPLIFY_TOLERANCE_METERS);
     const cum = computeCumulativeDist(points);
     const distanceMeters = cum[cum.length - 1];
-    await saveActualRoute(rideId, encodePolyline(simplified), distanceMeters);
+    await saveActualRoute(
+      rideId, encodePolyline(simplified), distanceMeters, findDetourViaPoints(points)
+    );
     return distanceMeters;
   } catch (err) {
     console.error(`[track] finalize failed rideId=${rideId}`, err);
