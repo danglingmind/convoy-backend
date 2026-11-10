@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import http2 from 'node:http2';
 import { SignJWT, importPKCS8 } from 'jose';
 import { NOTIFICATION_TYPES, NotificationData, NotificationType } from './types';
@@ -39,6 +40,12 @@ function getSession(): http2.ClientHttp2Session {
   return s;
 }
 
+/** APNs rejects an `apns-collapse-id` over 64 bytes (BadCollapseId): hash the long ones. */
+export function apnsCollapseId(raw: string): string {
+  if (Buffer.byteLength(raw) <= 64) return raw;
+  return `c-${createHash('sha256').update(raw).digest('hex').slice(0, 40)}`;
+}
+
 /** Send one alert. Returns false when the token is dead and should be removed. */
 export async function sendApns(
   token: string,
@@ -65,7 +72,7 @@ export async function sendApns(
       'apns-topic': BUNDLE_ID,
       'apns-push-type': 'alert',
       'apns-priority': spec.priority === 'high' ? '10' : '5',
-      'apns-collapse-id': spec.collapseId(data),
+      'apns-collapse-id': apnsCollapseId(spec.collapseId(data)),
       'content-type': 'application/json',
     });
     let status = 0;
