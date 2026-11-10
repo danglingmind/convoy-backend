@@ -27,11 +27,14 @@ export async function upsertUser(
   avatarUrl: string | null
 ): Promise<boolean> {
   // `xmax = 0` is true only for a freshly inserted row, so callers can tell a sign-up from a return.
+  // An existing avatar is never replaced from here: this runs on every request with the token's
+  // `imageUrl`, and a token minted before a photo change (`PUT /users/me/photo`) would otherwise
+  // put the old photo back for up to a minute. Apps sync photo changes via `PATCH /users/me`.
   const { rows } = await pool.query<{ inserted: boolean }>(
     `INSERT INTO users (id, name, avatar_url, created_at)
      VALUES ($1, $2, $3, now())
      ON CONFLICT (id) DO UPDATE
-       SET avatar_url = COALESCE(EXCLUDED.avatar_url, users.avatar_url)
+       SET avatar_url = COALESCE(users.avatar_url, EXCLUDED.avatar_url)
      RETURNING (xmax = 0) AS inserted`,
     [id, name, avatarUrl]
   );
@@ -47,6 +50,14 @@ export async function updateUserProfile(
     `UPDATE users SET name = $2, avatar_url = COALESCE($3, avatar_url) WHERE id = $1`,
     [id, name, avatarUrl]
   );
+}
+
+export async function setUserName(id: string, name: string): Promise<void> {
+  await pool.query(`UPDATE users SET name = $2 WHERE id = $1`, [id, name]);
+}
+
+export async function setUserAvatar(id: string, avatarUrl: string): Promise<void> {
+  await pool.query(`UPDATE users SET avatar_url = $2 WHERE id = $1`, [id, avatarUrl]);
 }
 
 export async function updateExtendedProfile(

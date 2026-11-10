@@ -55,7 +55,8 @@ export function initSocketServer(
 
       socket.data.userId = payload.sub;
       socket.data.name = name;
-      socket.data.avatarUrl = avatarUrl;
+      // Same reasoning for the photo: the row follows edits immediately, the token lags them.
+      socket.data.avatarUrl = dbUser?.avatar_url ?? avatarUrl;
 
       console.log(`[socket:auth] OK — userId=${payload.sub} name="${name}"`);
       // Seed a row for brand-new users; upsert never overwrites an existing name.

@@ -19,6 +19,29 @@ function clerk(): ReturnType<typeof createClerkClient> {
 }
 
 /**
+ * Writes the rider's chosen display name to Clerk.
+ *
+ * Clerk models first + last name; riders type one name. The first word goes in `firstName` and
+ * the rest in `lastName`, so every client's `[firstName, lastName].join(' ')` reads back exactly
+ * what was typed. A one-word name clears `lastName`.
+ */
+export async function setClerkName(userId: string, name: string): Promise<void> {
+  const space = name.indexOf(' ');
+  const firstName = space < 0 ? name : name.slice(0, space);
+  const lastName = space < 0 ? '' : name.slice(space + 1);
+  await clerk().users.updateUser(userId, { firstName, lastName });
+}
+
+/** Uploads a new profile photo to Clerk and returns the hosted URL Clerk now serves for it. */
+export async function setClerkProfileImage(userId: string, image: Buffer, contentType: string): Promise<string> {
+  // Blob, not File: Blob is global from Node 18, File only from Node 20, and render.yaml doesn't
+  // pin a Node version. Clerk reads the type from the Blob; the filename is not needed.
+  const file = new Blob([new Uint8Array(image)], { type: contentType });
+  const user = await clerk().users.updateUserProfileImage(userId, { file });
+  return user.imageUrl;
+}
+
+/**
  * Revokes the Clerk identity behind a deleted account.
  *
  * Called AFTER the database delete, never before, and the order is the whole design. Deleting the
