@@ -49,7 +49,7 @@ export async function sendApns(
   const auth = await providerToken();
   const body = JSON.stringify({
     aps: {
-      alert: { 'loc-key': spec.locKey, 'loc-args': [data.rideName] },
+      alert: { 'loc-key': spec.locKey(data), 'loc-args': spec.locArgs(data) },
       sound: 'default',
       'thread-id': `ride-${data.rideId}`,
     },

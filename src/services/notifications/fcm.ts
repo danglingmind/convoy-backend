@@ -59,7 +59,11 @@ export async function sendFcm(
     body: JSON.stringify({
       message: {
         token,
-        data: { type, rideId: data.rideId, rideName: data.rideName },
+        data: {
+          type, rideId: data.rideId, rideName: data.rideName,
+          ...(data.actorName ? { riderName: data.actorName } : {}),
+          ...(data.reason ? { reason: data.reason } : {}),
+        },
         android: { priority: spec.priority === 'high' ? 'HIGH' : 'NORMAL', collapse_key: spec.collapseId(data) },
       },
     }),

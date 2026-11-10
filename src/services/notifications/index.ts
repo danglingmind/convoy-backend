@@ -6,7 +6,8 @@
 import { deleteDeadToken, getDevicesForUsers } from '../../db/deviceRepo';
 import { apnsEnabled, sendApns } from './apns';
 import { fcmEnabled, sendFcm } from './fcm';
-import { NotificationData, NotificationType } from './types';
+import { getDisabledUsers } from '../../db/notificationPrefsRepo';
+import { NOTIFICATION_TYPES, NotificationData, NotificationType } from './types';
 
 export { NOTIFICATION_TYPES } from './types';
 export type { NotificationType, NotificationData } from './types';
@@ -26,6 +27,17 @@ export function notify(userIds: string[], type: NotificationType, data: Notifica
 
 async function deliver(userIds: string[], type: NotificationType, data: NotificationData): Promise<void> {
   if (userIds.length === 0) return;
+  const category = NOTIFICATION_TYPES[type].category;
+  if (category !== 'safety') {
+    let off = new Set<string>();
+    try {
+      off = await getDisabledUsers(userIds, category);
+    } catch (err) {
+      console.warn('[notifications] prefs lookup failed, sending anyway:', (err as Error).message);
+    }
+    userIds = userIds.filter((u) => !off.has(u));
+    if (userIds.length === 0) return;
+  }
   const devices = await getDevicesForUsers(userIds);
   await Promise.all(devices.map(async (d) => {
     try {

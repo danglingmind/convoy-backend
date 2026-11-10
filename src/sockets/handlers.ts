@@ -15,6 +15,7 @@ import { decodePolyline, computeCumulativeDist } from '../engines/polylineDecode
 import { createRegroupEvent, resolveRegroupEvent, RegroupCloseReason } from '../db/regroupRepo';
 import { recordLeaderFix } from '../services/trackService';
 import { createEmergencyEvent } from '../db/emergencyRepo';
+import { notify } from '../services/notifications';
 import { capture, captureSocket, km } from '../services/analytics';
 import { ActiveRideState, MAX_OPEN_REGROUPS, OpenRegroup, RegroupType } from '../types';
 
@@ -28,6 +29,30 @@ const LEADER_MAX_JUMP_METERS = parseInt(process.env.LEADER_MAX_JUMP_METERS ?? '5
 // or a tunnel would otherwise donate its entire silence to the ride's moving time.
 const MOVING_MIN_SPEED_MPS = parseFloat(process.env.MOVING_MIN_SPEED_MPS ?? '1.5');
 const MOVING_MAX_GAP_SECONDS = parseInt(process.env.MOVING_MAX_GAP_SECONDS ?? '90', 10);
+
+/** Push to the ride's other non-LEFT riders. Fire-and-forget: never blocks or throws into the handler. */
+function pushToOthers(
+  rideId: string,
+  actorId: string,
+  actorName: string,
+  type: 'REGROUP_CALLED' | 'EMERGENCY',
+  eventId: string,
+  reason?: 'FUEL' | 'FOOD' | 'SCENIC'
+): void {
+  void (async () => {
+    try {
+      const [ride, riders] = await Promise.all([getRideById(rideId), getParticipantsWithUsers(rideId)]);
+      if (!ride) return;
+      notify(
+        riders.filter((p) => p.status !== 'LEFT' && p.user_id !== actorId).map((p) => p.user_id),
+        type,
+        { rideId, rideName: ride.title, actorName, actorId, reason, eventId: String(eventId) }
+      );
+    } catch (err) {
+      console.warn(`[notifications] ${type} push skipped:`, (err as Error).message);
+    }
+  })();
+}
 
 export function setupSocketHandlers(io: Server): void {
   io.on('connection', (socket: Socket) => {
@@ -496,6 +521,9 @@ export function setupSocketHandlers(io: Server): void {
           lng: data.lng,
           createdAt,
         });
+
+        pushToOthers(data.rideId, userId, userName, 'REGROUP_CALLED', regroupId,
+          data.type === 'FUEL' || data.type === 'FOOD' || data.type === 'SCENIC' ? data.type : undefined);
       }
     );
 
@@ -623,6 +651,8 @@ export function setupSocketHandlers(io: Server): void {
           createdAt,
           priority: 'CRITICAL',
         });
+
+        pushToOthers(data.rideId, userId, userName, 'EMERGENCY', emergencyId);
       }
     );
 
