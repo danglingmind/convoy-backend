@@ -27,9 +27,6 @@ export function initSocketServer(
 
   io.use(async (socket, next) => {
     const auth = socket.handshake.auth;
-    const query = socket.handshake.query;
-    console.log('[socket:auth] handshake.auth =', JSON.stringify(auth));
-    console.log('[socket:auth] handshake.query keys =', Object.keys(query));
 
     const token = auth?.token as string | undefined;
     if (!token) {
