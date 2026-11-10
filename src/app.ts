@@ -6,6 +6,7 @@ import { healthRoutes } from './routes/health';
 import { deeplinkRoutes } from './routes/deeplink';
 import { ridesRoutes } from './routes/rides';
 import { eventsRoutes } from './routes/events';
+import { devicesRoutes } from './routes/devices';
 import { membershipRoutes } from './routes/memberships';
 import { shareManagementRoutes, sharedRouteRoutes } from './routes/sharedRoutes';
 
@@ -58,6 +59,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     await protected_.register(ridesRoutes);
     await protected_.register(membershipRoutes);
     await protected_.register(eventsRoutes);
+    await protected_.register(devicesRoutes);
     await protected_.register(shareManagementRoutes);
   });
 

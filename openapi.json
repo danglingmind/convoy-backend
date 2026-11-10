@@ -2562,6 +2562,90 @@
         }
       }
     },
+    "/devices": {
+      "put": {
+        "summary": "Register a push notification token for the caller",
+        "tags": [
+          "Devices"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token",
+                  "platform"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  },
+                  "platform": {
+                    "type": "string",
+                    "enum": [
+                      "ios",
+                      "android"
+                    ]
+                  },
+                  "locale": {
+                    "type": "string",
+                    "maxLength": 32
+                  },
+                  "appVersion": {
+                    "type": "string",
+                    "maxLength": 32
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Registered"
+          }
+        }
+      }
+    },
+    "/devices/{token}": {
+      "delete": {
+        "summary": "Unregister the caller's push notification token",
+        "tags": [
+          "Devices"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "in": "path",
+            "name": "token",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Unregistered"
+          }
+        }
+      }
+    },
     "/rides/{rideId}/share": {
       "post": {
         "summary": "Create (or fetch) the public share link for a completed ride",

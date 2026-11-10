@@ -42,6 +42,7 @@ import { finalizeLeaderTrack } from '../services/trackService';
 import { closeOpenRegroupsForRide, listLeaderStops } from '../db/regroupRepo';
 import { getActualRoutePolyline } from '../db/trackRepo';
 import { markCloned } from '../db/shareRepo';
+import { notify } from '../services/notifications';
 
 const security = [{ bearerAuth: [] }];
 
@@ -1203,6 +1204,12 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       // Socket.IO not yet initialized (e.g. in tests)
     }
 
+    notify(
+      participants.filter((p) => p.status !== 'LEFT' && p.user_id !== userId).map((p) => p.user_id),
+      'RIDE_STARTED',
+      { rideId, rideName: ride.title }
+    );
+
     return { ok: true };
   });
 
@@ -1353,6 +1360,11 @@ export async function ridesRoutes(fastify: FastifyInstance): Promise<void> {
       const durationMin = ride.started_at
         ? Math.round((endedAt.getTime() - new Date(ride.started_at).getTime()) / 60_000)
         : undefined;
+      notify(
+        riders.filter((r) => r.user_id !== userId).map((r) => r.user_id),
+        'RIDE_ENDED',
+        { rideId, rideName: ride.title }
+      );
       for (const r of riders) {
         capture(r.user_id, 'ride_completed', {
           duration_min: durationMin,
