@@ -10,6 +10,7 @@
     "dev": "tsx watch src/index.ts",
     "migrate": "tsx src/db/migrate.ts",
     "smoke": "tsx scripts/smoke-test.ts",
+    "test": "tsx --test scripts/*.test.ts",
     "get-token": "tsx scripts/get-token.ts",
     "seed:demo": "tsx scripts/seed-demo.ts",
     "seed:riders": "tsx scripts/seed-riders.ts"
